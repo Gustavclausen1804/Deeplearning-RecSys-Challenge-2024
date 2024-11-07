@@ -11,3 +11,6 @@ https://recsys.eb.dk
 
 ## Dummy examples
 https://github.com/ebanalyse/ebnerd-benchmark
+
+## Benchmark implementation
+https://github.com/ebanalyse/ebnerd-benchmark/blob/main/src/ebrec/models/newsrec/nrms.py

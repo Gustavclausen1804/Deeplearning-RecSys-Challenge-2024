@@ -8,3 +8,6 @@ https://aclanthology.org/D19-1671.pdf
 
 ## The site for the RecSys challenge is: 
 https://recsys.eb.dk
+
+## Dummy examples
+https://github.com/ebanalyse/ebnerd-benchmark

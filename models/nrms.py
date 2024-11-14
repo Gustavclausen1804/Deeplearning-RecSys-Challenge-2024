@@ -1,21 +1,10 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
-# Licensed under the MIT License.
-from models.layers import AttLayer2, SelfAttention
-import tensorflow as tf
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
+from models.layers import AttLayer2, SelfAttention
 
-
-class NRMSModel:
-    """NRMS model(Neural News Recommendation with Multi-Head Self-Attention)
-
-    Chuhan Wu, Fangzhao Wu, Suyu Ge, Tao Qi, Yongfeng Huang,and Xing Xie, "Neural News
-    Recommendation with Multi-Head Self-Attention" in Proceedings of the 2019 Conference
-    on Empirical Methods in Natural Language Processing and the 9th International Joint Conference
-    on Natural Language Processing (EMNLP-IJCNLP)
-
-    Attributes:
-    """
-
+class NRMSModel(nn.Module):
     def __init__(
         self,
         hparams: dict,
@@ -24,163 +13,130 @@ class NRMSModel:
         vocab_size: int = 32000,
         seed: int = None,
     ):
-        """Initialization steps for NRMS."""
+        super().__init__()
         self.hparams = hparams
-        self.seed = seed
-
-        # SET SEED:
-        tf.random.set_seed(seed)
-        np.random.seed(seed)
-
-        # INIT THE WORD-EMBEDDINGS:
+        if seed is not None:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+        
+        # Initialize word embeddings
         if word2vec_embedding is None:
-            self.word2vec_embedding = np.random.rand(vocab_size, word_emb_dim)
+            self.word2vec_embedding = nn.Embedding(vocab_size, word_emb_dim)
         else:
-            self.word2vec_embedding = word2vec_embedding
-
-        # BUILD AND COMPILE MODEL:
-        self.model, self.scorer = self._build_graph()
-        data_loss = self._get_loss(self.hparams.loss)
-        train_optimizer = self._get_opt(
-            optimizer=self.hparams.optimizer, lr=self.hparams.learning_rate
-        )
-        self.model.compile(loss=data_loss, optimizer=train_optimizer)
-
-    def _get_loss(self, loss: str):
-        """Make loss function, consists of data loss and regularization loss
-        Returns:
-            object: Loss function or loss function name
-        """
-        if loss == "cross_entropy_loss":
-            data_loss = "categorical_crossentropy"
-        elif loss == "log_loss":
-            data_loss = "binary_crossentropy"
-        else:
-            raise ValueError(f"this loss not defined {loss}")
-        return data_loss
-
-    def _get_opt(self, optimizer: str, lr: float):
-        """Get the optimizer according to configuration. Usually we will use Adam.
-        Returns:
-            object: An optimizer.
-        """
-        # TODO: shouldn't be a string input you should just set the optimizer, to avoid stuff like this:
-        # => 'WARNING:absl:At this time, the v2.11+ optimizer `tf.keras.optimizers.Adam` runs slowly on M1/M2 Macs, please use the legacy Keras optimizer instead, located at `tf.keras.optimizers.legacy.Adam`.'
-        if optimizer == "adam":
-            train_opt = tf.keras.optimizers.Adam(learning_rate=lr)
-        else:
-            raise ValueError(f"this optimizer not defined {optimizer}")
-        return train_opt
-
-    def _build_graph(self):
-        """Build NRMS model and scorer.
-
-        Returns:
-            object: a model used to train.
-            object: a model used to evaluate and inference.
-        """
-        model, scorer = self._build_nrms()
-        return model, scorer
-
-    def _build_userencoder(self, titleencoder):
-        """The main function to create user encoder of NRMS.
-
-        Args:
-            titleencoder (object): the news encoder of NRMS.
-
-        Return:
-            object: the user encoder of NRMS.
-        """
-        his_input_title = tf.keras.Input(
-            shape=(self.hparams.history_size, self.hparams.title_size), dtype="int32"
-        )
-
-        click_title_presents = tf.keras.layers.TimeDistributed(titleencoder)(
-            his_input_title
-        )
-        y = SelfAttention(self.hparams.head_num, self.hparams.head_dim, seed=self.seed)(
-            [click_title_presents] * 3
-        )
-        user_present = AttLayer2(self.hparams.attention_hidden_dim, seed=self.seed)(y)
-
-        model = tf.keras.Model(his_input_title, user_present, name="user_encoder")
-        return model
-
+            self.word2vec_embedding = nn.Embedding.from_pretrained(
+                torch.FloatTensor(word2vec_embedding),
+                freeze=False
+            )
+        
+        # Build encoder components
+        self.newsencoder = self._build_newsencoder()
+        self.userencoder = self._build_userencoder()
+        
+        # Similarity computation
+        self.dot_product = nn.Linear(self.hparams.attention_hidden_dim, self.hparams.attention_hidden_dim, bias=False)
+    
     def _build_newsencoder(self):
-        """The main function to create news encoder of NRMS.
-
+        return nn.Sequential(
+            self.word2vec_embedding,
+            nn.Dropout(self.hparams.dropout),
+            SelfAttention(self.hparams.head_num, self.hparams.head_dim),
+            nn.Dropout(self.hparams.dropout),
+            AttLayer2(self.hparams.attention_hidden_dim)
+        )
+    
+    def _build_userencoder(self):
+        return nn.Sequential(
+            SelfAttention(self.hparams.head_num, self.hparams.head_dim),
+            AttLayer2(self.hparams.attention_hidden_dim)
+        )
+    
+    def get_news_embedding(self, title):
+        return self.newsencoder(title)
+    
+    def get_user_embedding(self, clicked_news):
+        # TimeDistributed layer equivalent
+        batch_size = clicked_news.size(0)
+        clicked_news_reshape = clicked_news.view(-1, clicked_news.size(-1))
+        news_embeddings = self.newsencoder(clicked_news_reshape)
+        news_embeddings = news_embeddings.view(batch_size, -1, news_embeddings.size(-1))
+        
+        return self.userencoder(news_embeddings)
+    
+    def forward(self, his_input_title, pred_input_title, compute_scores=True):
+        user_present = self.get_user_embedding(his_input_title)
+        news_present = self.get_news_embedding(pred_input_title)
+        
+        if compute_scores:
+            # Compute similarity scores
+            scores = torch.matmul(news_present, user_present.unsqueeze(-1)).squeeze(-1)
+            return F.softmax(scores, dim=-1)
+        else:
+            return user_present, news_present
+    
+    def scoring(self, his_input_title, pred_input_title_one):
+        user_present = self.get_user_embedding(his_input_title)
+        news_present_one = self.get_news_embedding(pred_input_title_one.squeeze(1))
+        
+        scores = torch.matmul(news_present_one, user_present.unsqueeze(-1)).squeeze(-1)
+        return torch.sigmoid(scores)
+    
+    def configure_optimizers(self, optimizer='adam', learning_rate=0.001):
+        if optimizer == 'adam':
+            return torch.optim.Adam(self.parameters(), lr=learning_rate)
+        raise ValueError(f"Optimizer {optimizer} not supported")
+    
+    def get_loss_fn(self, loss_type):
+        if loss_type == "cross_entropy_loss":
+            return nn.CrossEntropyLoss()
+        elif loss_type == "log_loss":
+            return nn.BCELoss()
+        raise ValueError(f"Loss {loss_type} not supported")
+    
+    def predict(self, dataloader):
+        """
+        Make predictions using the model
         Args:
-            embedding_layer (object): a word embedding layer.
-
-        Return:
-            object: the news encoder of NRMS.
-        """
-        embedding_layer = tf.keras.layers.Embedding(
-            self.word2vec_embedding.shape[0],
-            self.word2vec_embedding.shape[1],
-            weights=[self.word2vec_embedding],
-            trainable=True,
-        )
-        sequences_input_title = tf.keras.Input(
-            shape=(self.hparams.title_size,), dtype="int32"
-        )
-        embedded_sequences_title = embedding_layer(sequences_input_title)
-
-        y = tf.keras.layers.Dropout(self.hparams.dropout)(embedded_sequences_title)
-        y = SelfAttention(self.hparams.head_num, self.hparams.head_dim, seed=self.seed)(
-            [y, y, y]
-        )
-        y = tf.keras.layers.Dropout(self.hparams.dropout)(y)
-        pred_title = AttLayer2(self.hparams.attention_hidden_dim, seed=self.seed)(y)
-
-        model = tf.keras.Model(sequences_input_title, pred_title, name="news_encoder")
-        return model
-
-    def _build_nrms(self):
-        """The main function to create NRMS's logic. The core of NRMS
-        is a user encoder and a news encoder.
-
+            dataloader: DataLoader containing validation/test data
         Returns:
-            object: a model used to train.
-            object: a model used to evaluate and inference.
+            numpy array of predictions
         """
+        self.eval()  # Set model to evaluation mode
+        device = next(self.parameters()).device
+        predictions = []
+        
+        with torch.no_grad():
+            for inputs, _ in tqdm(dataloader, desc='Predicting'):
+                inputs = [x.to(device) for x in inputs]
+                scores = self.scoring(*inputs)  # Use the scoring method we defined earlier
+                predictions.append(scores.cpu().numpy())
+        
+        return np.concatenate(predictions, axis=0)
 
-        his_input_title = tf.keras.Input(
-            shape=(self.hparams.history_size, self.hparams.title_size),
-            dtype="int32",
-        )
-        pred_input_title = tf.keras.Input(
-            # shape = (hparams.npratio + 1, hparams.title_size)
-            shape=(None, self.hparams.title_size),
-            dtype="int32",
-        )
-        pred_input_title_one = tf.keras.Input(
-            shape=(
-                1,
-                self.hparams.title_size,
-            ),
-            dtype="int32",
-        )
-        pred_title_one_reshape = tf.keras.layers.Reshape((self.hparams.title_size,))(
-            pred_input_title_one
-        )
-        titleencoder = self._build_newsencoder()
-        self.userencoder = self._build_userencoder(titleencoder)
-        self.newsencoder = titleencoder
-
-        user_present = self.userencoder(his_input_title)
-        news_present = tf.keras.layers.TimeDistributed(self.newsencoder)(
-            pred_input_title
-        )
-        news_present_one = self.newsencoder(pred_title_one_reshape)
-
-        preds = tf.keras.layers.Dot(axes=-1)([news_present, user_present])
-        preds = tf.keras.layers.Activation(activation="softmax")(preds)
-
-        pred_one = tf.keras.layers.Dot(axes=-1)([news_present_one, user_present])
-        pred_one = tf.keras.layers.Activation(activation="sigmoid")(pred_one)
-
-        model = tf.keras.Model([his_input_title, pred_input_title], preds)
-        scorer = tf.keras.Model([his_input_title, pred_input_title_one], pred_one)
-
-        return model, scorer
+class NRMSTrainer:
+    def __init__(self, model, optimizer, loss_fn, device='cuda'):
+        self.model = model.to(device)
+        self.optimizer = optimizer
+        self.loss_fn = loss_fn
+        self.device = device
+    
+    def train_step(self, batch):
+        self.model.train()
+        his_title, pred_title = [x.to(self.device) for x in batch[0]]
+        labels = batch[1].to(self.device)
+        
+        self.optimizer.zero_grad()
+        scores = self.model(his_title, pred_title)
+        loss = self.loss_fn(scores, labels)
+        loss.backward()
+        self.optimizer.step()
+        
+        return loss.item()
+    
+    def evaluate(self, batch):
+        self.model.eval()
+        with torch.no_grad():
+            his_title, pred_title = [x.to(self.device) for x in batch[0]]
+            labels = batch[1].to(self.device)
+            scores = self.model(his_title, pred_title)
+            loss = self.loss_fn(scores, labels)
+        return loss.item()

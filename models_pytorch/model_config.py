@@ -79,6 +79,7 @@ class hparams_nrms:
     loss: str = "cross_entropy_loss"
     dropout: float = 0.2
     learning_rate: float = 0.0001
+    news_output_dim=200
 
 
 class hparams_nrms_docvec:

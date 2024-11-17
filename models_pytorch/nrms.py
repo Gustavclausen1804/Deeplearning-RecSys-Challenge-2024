@@ -9,27 +9,28 @@ import numpy as np
 from models_pytorch.layers import AttLayer2, SelfAttention
 
 class UserEncoder(nn.Module):
-    def __init__(self, titleencoder, hparams, seed):
+    def __init__(self, titleencoder, hparams, seed, device='cuda'):
         super(UserEncoder, self).__init__()
+        self.device = device
         self.titleencoder = titleencoder
         self.self_attention = SelfAttention(
             multiheads=hparams["head_num"], 
             head_dim=hparams["head_dim"], 
-            seed=seed
+            seed=seed,
+            device=device
         )
         self.attention_layer = AttLayer2(
-            dim=hparams["news_output_dim"],  # Ensure this matches the news_output_dim
-            seed=seed
-        )
-        
-        # Remove the projection layer if it's no longer needed
-        # If you still need to use user_projection, ensure in_features matches the output of attention_layer
+            dim=hparams["news_output_dim"],
+            seed=seed,
+            device=device
+        ).to(device)
         self.user_projection = nn.Linear(
             in_features=hparams["news_output_dim"], 
             out_features=hparams["news_output_dim"]
-        )
+        ).to(device)
 
     def forward(self, his_input_title):
+        his_input_title = his_input_title.to(self.device)
         batch_size, history_size, title_size = his_input_title.size()
         #print(f"UserEncoder - his_input_title shape: {his_input_title.shape}")
 
@@ -58,19 +59,20 @@ class UserEncoder(nn.Module):
 
 
 class NewsEncoder(nn.Module):
-    def __init__(self, embedding_layer, hparams, seed=42):
+    def __init__(self, embedding_layer, hparams, seed=42, device='cuda'):
         super(NewsEncoder, self).__init__()
+        self.device = device
         torch.manual_seed(seed)
         np.random.seed(seed)
         
         self.output_dim = hparams.get('news_output_dim', 200)
-        self.embedding = embedding_layer
-
-        self.fc1 = nn.Linear(self.embedding.embedding_dim, hparams.get('hidden_dim', 128))
+        self.embedding = embedding_layer.to(device)
+        self.fc1 = nn.Linear(self.embedding.embedding_dim, hparams.get('hidden_dim', 128)).to(device)
         self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(hparams.get('hidden_dim', 128), self.output_dim)
+        self.fc2 = nn.Linear(hparams.get('hidden_dim', 128), self.output_dim).to(device)
 
     def forward(self, x):
+        x = x.to(self.device)
         x = x.long()
         
         embedded = self.embedding(x)
@@ -102,21 +104,20 @@ class NRMSModel(nn.Module):
                 padding_idx=0
             )
         self.word_emb_dim = embedding_layer.embedding_dim
-
-        # Move embedding layer to specified device
         embedding_layer = embedding_layer.to(device)
 
-        # Define NewsEncoder and UserEncoder
-        self.newsencoder = self._build_newsencoder(embedding_layer).to(device)
-        self.userencoder = self._build_userencoder(self.newsencoder).to(device)
+        # Define NewsEncoder and UserEncoder with device
+        self.newsencoder = self._build_newsencoder(embedding_layer)
+        self.userencoder = self._build_userencoder(self.newsencoder)
+        
+        # Move entire model to device
+        self.to(device)
 
     def _build_newsencoder(self, embedding_layer):
-        return NewsEncoder(embedding_layer, self.hparams, self.seed)
+        return NewsEncoder(embedding_layer, self.hparams, self.seed, self.device)
 
     def _build_userencoder(self, titleencoder):
-        
-
-        return UserEncoder(titleencoder, self.hparams, self.seed)
+        return UserEncoder(titleencoder, self.hparams, self.seed, self.device)
 
     def forward(self, his_input_title, pred_input_title):
         # Move input tensors to the correct device

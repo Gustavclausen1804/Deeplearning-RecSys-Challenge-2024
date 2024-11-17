@@ -7,20 +7,22 @@ import torch.nn.functional as F
 class AttLayer2(nn.Module):
     """Soft alignment attention implementation."""
 
-    def __init__(self, dim=200, seed=0):
+    def __init__(self, dim=200, seed=0, device='cuda'):
         super(AttLayer2, self).__init__()
         self.dim = dim
+        self.device = device
         torch.manual_seed(seed)
         self.W = None  # Will be initialized in build()
-        self.b = nn.Parameter(torch.zeros(dim))
-        self.q = nn.Linear(in_features=dim, out_features=1, bias=False)
+        self.b = nn.Parameter(torch.zeros(dim).to(device))
+        self.q = nn.Linear(in_features=dim, out_features=1, bias=False).to(device)
     
     def build(self, input_shape):
         in_features = input_shape[-1]
-        self.W = nn.Linear(in_features=in_features, out_features=self.dim, bias=True)
+        self.W = nn.Linear(in_features=in_features, out_features=self.dim, bias=True).to(self.device)
         #print(f"AttLayer2 build: W initialized with in_features={in_features}, out_features={self.dim}")
     
     def forward(self, inputs, mask=None):
+        inputs = inputs.to(self.device)
         if self.W is None:
             self.build(inputs.shape)
         
@@ -33,6 +35,7 @@ class AttLayer2(nn.Module):
         #print(f"AttLayer2 Forward - attention scores shape: {attention.shape}")
         
         if mask is not None:
+            mask = mask.to(self.device)
             attention = attention.masked_fill(~mask, float('-inf'))
         
         # Compute attention weights
@@ -56,13 +59,14 @@ class AttLayer2(nn.Module):
 class SelfAttention(nn.Module):
     """Multi-head self-attention implementation."""
 
-    def __init__(self, multiheads, head_dim, seed=0, mask_right=False, **kwargs):
+    def __init__(self, multiheads, head_dim, seed=0, mask_right=False, device='cuda', **kwargs):
         """Initialization steps for SelfAttention."""
         super(SelfAttention, self).__init__(**kwargs)
         self.multiheads = multiheads
         self.head_dim = head_dim
         self.output_dim = multiheads * head_dim
         self.mask_right = mask_right
+        self.device = device
         torch.manual_seed(seed)
 
     def build(self, input_shapes):
@@ -72,17 +76,17 @@ class SelfAttention(nn.Module):
         in_features_k = K_shape[-1]
         in_features_v = V_shape[-1]
 
-        self.WQ = nn.Linear(in_features=in_features_q, out_features=self.output_dim, bias=False)
-        self.WK = nn.Linear(in_features=in_features_k, out_features=self.output_dim, bias=False)
-        self.WV = nn.Linear(in_features=in_features_v, out_features=self.output_dim, bias=False)
+        self.WQ = nn.Linear(in_features=in_features_q, out_features=self.output_dim, bias=False).to(self.device)
+        self.WK = nn.Linear(in_features=in_features_k, out_features=self.output_dim, bias=False).to(self.device)
+        self.WV = nn.Linear(in_features=in_features_v, out_features=self.output_dim, bias=False).to(self.device)
         #print(f"SelfAttention build: WQ, WK, WV initialized with in_features={in_features_q}, {in_features_k}, {in_features_v} and out_features={self.output_dim}")
 
     def forward(self, QKVs):
         """Core logic of multi-head self-attention."""
         if len(QKVs) == 3:
-            Q_seq, K_seq, V_seq = QKVs
+            Q_seq, K_seq, V_seq = [q.to(self.device) for q in QKVs]
         elif len(QKVs) == 5:
-            Q_seq, K_seq, V_seq, Q_len, V_len = QKVs
+            Q_seq, K_seq, V_seq, Q_len, V_len = [q.to(self.device) if isinstance(q, torch.Tensor) else q for q in QKVs]
         else:
             raise ValueError("QKVs must be a list of 3 or 5 tensors.")
 

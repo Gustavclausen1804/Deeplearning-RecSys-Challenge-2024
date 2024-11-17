@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import tqdm
 from models.layers import AttLayer2, SelfAttention
 
 class NRMSModel(nn.Module):
@@ -50,19 +51,54 @@ class NRMSModel(nn.Module):
             AttLayer2(self.hparams.attention_hidden_dim)
         )
     
-    def get_news_embedding(self, title):
-        return self.newsencoder(title)
-    
     def get_user_embedding(self, clicked_news):
-        # TimeDistributed layer equivalent
-        batch_size = clicked_news.size(0)
-        clicked_news_reshape = clicked_news.view(-1, clicked_news.size(-1))
+        """
+        Args:
+            clicked_news: tensor of shape [batch_size, history_size, title_size]
+                         or [batch_size, 1, history_size, title_size]
+        """
+        if len(clicked_news.shape) == 4:
+            clicked_news = clicked_news.squeeze(1)
+        
+        batch_size, history_size, title_size = clicked_news.shape
+        # Reshape for processing each title
+        clicked_news_reshape = clicked_news.view(-1, title_size)
+        
+        # Get embeddings for each title
         news_embeddings = self.newsencoder(clicked_news_reshape)
-        news_embeddings = news_embeddings.view(batch_size, -1, news_embeddings.size(-1))
+        # Reshape back
+        news_embeddings = news_embeddings.view(batch_size, history_size, -1)
         
         return self.userencoder(news_embeddings)
     
+    def get_news_embedding(self, title):
+        """
+        Args:
+            title: tensor of shape [batch_size, npratio, title_size]
+                  or [batch_size, 1, npratio, title_size]
+        """
+        if len(title.shape) == 4:
+            title = title.squeeze(1)
+            
+        batch_size, npratio, title_size = title.shape
+        # Reshape for processing each title
+        title_reshape = title.view(-1, title_size)
+        
+        # Get embeddings
+        embeddings = self.newsencoder(title_reshape)
+        # Reshape back
+        return embeddings.view(batch_size, npratio, -1)
+    
     def forward(self, his_input_title, pred_input_title, compute_scores=True):
+        """
+        Args:
+            his_input_title: tensor of shape [batch_size, 1, history_size, title_size]
+            pred_input_title: tensor of shape [batch_size, 1, npratio, title_size]
+        """
+        print(f"\nInput shapes in forward pass:")
+        print(f"his_input_title shape: {his_input_title.shape}")
+        print(f"pred_input_title shape: {pred_input_title.shape}")
+        
         user_present = self.get_user_embedding(his_input_title)
         news_present = self.get_news_embedding(pred_input_title)
         
@@ -72,10 +108,15 @@ class NRMSModel(nn.Module):
             return F.softmax(scores, dim=-1)
         else:
             return user_present, news_present
-    
+        
     def scoring(self, his_input_title, pred_input_title_one):
+        """
+        Args:
+            his_input_title: tensor of shape [batch_size, 1, history_size, title_size]
+            pred_input_title_one: tensor of shape [batch_size, 1, 1, title_size]
+        """
         user_present = self.get_user_embedding(his_input_title)
-        news_present_one = self.get_news_embedding(pred_input_title_one.squeeze(1))
+        news_present_one = self.get_news_embedding(pred_input_title_one)
         
         scores = torch.matmul(news_present_one, user_present.unsqueeze(-1)).squeeze(-1)
         return torch.sigmoid(scores)

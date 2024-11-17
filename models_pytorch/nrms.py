@@ -85,10 +85,11 @@ class NewsEncoder(nn.Module):
 
 
 class NRMSModel(nn.Module):
-    def __init__(self, hparams, word2vec_embedding=None, word_emb_dim=300, vocab_size=32000, seed=42):
+    def __init__(self, hparams, word2vec_embedding=None, word_emb_dim=300, vocab_size=32000, seed=42, device='cuda'):
         super(NRMSModel, self).__init__()
         self.hparams = hparams
         self.seed = seed
+        self.device = device
         torch.manual_seed(seed)
         np.random.seed(seed)
 
@@ -102,11 +103,12 @@ class NRMSModel(nn.Module):
             )
         self.word_emb_dim = embedding_layer.embedding_dim
 
-        # Define NewsEncoder
-        self.newsencoder = self._build_newsencoder(embedding_layer)
+        # Move embedding layer to specified device
+        embedding_layer = embedding_layer.to(device)
 
-        # Define UserEncoder
-        self.userencoder = self._build_userencoder(self.newsencoder)
+        # Define NewsEncoder and UserEncoder
+        self.newsencoder = self._build_newsencoder(embedding_layer).to(device)
+        self.userencoder = self._build_userencoder(self.newsencoder).to(device)
 
     def _build_newsencoder(self, embedding_layer):
         return NewsEncoder(embedding_layer, self.hparams, self.seed)
@@ -117,6 +119,10 @@ class NRMSModel(nn.Module):
         return UserEncoder(titleencoder, self.hparams, self.seed)
 
     def forward(self, his_input_title, pred_input_title):
+        # Move input tensors to the correct device
+        his_input_title = his_input_title.to(self.device)
+        pred_input_title = pred_input_title.to(self.device)
+        
         user_present = self.userencoder(his_input_title)  # (batch_size, output_dim)
         #print(f"NRMSModel - user_present shape: {user_present.shape}")
         
@@ -138,6 +144,10 @@ class NRMSModel(nn.Module):
         return scores  # (batch_size, npratio_plus_1)
 
     def predict(self, his_input_title, pred_input_title_one):
+        # Move input tensors to the correct device
+        his_input_title = his_input_title.to(self.device)
+        pred_input_title_one = pred_input_title_one.to(self.device)
+        
         user_present = self.userencoder(his_input_title)  # (batch_size, output_dim)
         news_present_one = self.newsencoder(pred_input_title_one.squeeze(1))  # (batch_size, output_dim)
         
@@ -148,9 +158,9 @@ class NRMSModel(nn.Module):
 
     def get_loss(self, criterion="cross_entropy"):
         if criterion == "cross_entropy":
-            return nn.CrossEntropyLoss()
+            return nn.CrossEntropyLoss().to(self.device)
         elif criterion == "log_loss":
-            return nn.BCELoss()
+            return nn.BCELoss().to(self.device)
         else:
             raise ValueError(f"Loss function not defined: {criterion}")
 

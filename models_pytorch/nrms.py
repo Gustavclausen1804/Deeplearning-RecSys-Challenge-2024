@@ -168,36 +168,38 @@ class NRMSModel(nn.Module):
 
     @torch.no_grad()
     def predict(self, dataloader):
-        """Predict scores for validation data handling variable batch sizes"""
         self.eval()
-        all_scores = []
-        print("\nStarting prediction...")
+        all_predictions = []
         
-        for batch_idx, batch in enumerate(dataloader):
+        for batch in dataloader:
             his_input_title, pred_input_title = batch[0]
+            batch_size = his_input_title.size(0)
+            
+            # Move to device
             his_input_title = his_input_title.to(self.device)
             pred_input_title = pred_input_title.to(self.device)
             
-            # Process entire batch at once
-            batch_size = his_input_title.size(0)
+            # Get user embeddings
             user_present = self.userencoder(his_input_title)
             
-            # Process each sample in the batch individually
+            # Get predictions for each user in batch
             for i in range(batch_size):
-                sample_scores = []
-                user_emb = user_present[i:i+1]  # Keep batch dimension
-                pred_titles = pred_input_title[i]  # Get all predictions for this sample
+                user_scores = []
+                user_emb = user_present[i:i+1]
+                n_candidates = (pred_input_title[i] != 0).any(dim=-1).sum().item()  # Count non-zero rows
                 
-                # Get scores for each candidate article
-                for j in range(pred_titles.size(0)):
-                    pred_one = pred_titles[j:j+1].unsqueeze(0)  # Add batch dimension
-                    news_present_one = self.newsencoder(pred_one.squeeze(1))
-                    score = torch.sum(news_present_one * user_emb, dim=1)
-                    sample_scores.append(score.item())
+                # Only predict for non-padding candidates
+                for j in range(n_candidates):
+                    title = pred_input_title[i:i+1, j, :]
+                    news_present = self.newsencoder(title)
+                    score = torch.sum(news_present * user_emb, dim=1)
+                    user_scores.append(score.item())
                 
-                all_scores.append(sample_scores)
+                all_predictions.append(user_scores)
         
-        return all_scores
+        return all_predictions
+
+
 
     def get_loss(self, criterion="cross_entropy"):
         if criterion == "cross_entropy":

@@ -87,7 +87,7 @@ class NewsEncoder(nn.Module):
 
 
 class NRMSModel(nn.Module):
-    def __init__(self, hparams, word2vec_embedding=None, word_emb_dim=300, vocab_size=32000, seed=42, device='cuda'):
+    def __init__(self, hparams, word2vec_embedding=None, word_emb_dim=300, vocab_size=32000, seed=42, device='cuda', fos=2):
         super(NRMSModel, self).__init__()
         self.hparams = hparams
         self.seed = seed
@@ -111,7 +111,7 @@ class NRMSModel(nn.Module):
         self.userencoder = self._build_userencoder(self.newsencoder)
         
         # Move entire model to device
-        self.to(device)
+        self.to(self.device)
 
     def _build_newsencoder(self, embedding_layer):
         return NewsEncoder(embedding_layer, self.hparams, self.seed, self.device)
@@ -144,18 +144,60 @@ class NRMSModel(nn.Module):
 
         return scores  # (batch_size, npratio_plus_1)
 
-    def predict(self, his_input_title, pred_input_title_one):
+    def score(self, his_input_title, pred_input_title_one):
+        """Equivalent to TF scorer model for evaluation
+        Args:
+            his_input_title: tensor of shape (batch_size, history_size, title_size)
+            pred_input_title_one: tensor of shape (batch_size, 1, title_size)
+        Returns:
+            scores: tensor of shape (batch_size, 1)
+        """
         # Move input tensors to the correct device
         his_input_title = his_input_title.to(self.device)
         pred_input_title_one = pred_input_title_one.to(self.device)
         
-        user_present = self.userencoder(his_input_title)  # (batch_size, output_dim)
-        news_present_one = self.newsencoder(pred_input_title_one.squeeze(1))  # (batch_size, output_dim)
+        # Get user representation
+        user_present = self.userencoder(his_input_title)
         
-        score = torch.sum(news_present_one * user_present, dim=1)  # (batch_size,)
-        #print(f"NRMSModel - predict score shape: {score.shape}")
+        # Get news representation for single item
+        news_present_one = self.newsencoder(pred_input_title_one.squeeze(1))
+        
+        # Compute dot product and apply sigmoid
+        scores = torch.sum(news_present_one * user_present, dim=1, keepdim=True)
+        return torch.sigmoid(scores)
 
-        return torch.sigmoid(score)  # (batch_size,)
+    @torch.no_grad()
+    def predict(self, dataloader):
+        """Predict scores for validation data handling variable batch sizes"""
+        self.eval()
+        all_scores = []
+        print("\nStarting prediction...")
+        
+        for batch_idx, batch in enumerate(dataloader):
+            his_input_title, pred_input_title = batch[0]
+            his_input_title = his_input_title.to(self.device)
+            pred_input_title = pred_input_title.to(self.device)
+            
+            # Process entire batch at once
+            batch_size = his_input_title.size(0)
+            user_present = self.userencoder(his_input_title)
+            
+            # Process each sample in the batch individually
+            for i in range(batch_size):
+                sample_scores = []
+                user_emb = user_present[i:i+1]  # Keep batch dimension
+                pred_titles = pred_input_title[i]  # Get all predictions for this sample
+                
+                # Get scores for each candidate article
+                for j in range(pred_titles.size(0)):
+                    pred_one = pred_titles[j:j+1].unsqueeze(0)  # Add batch dimension
+                    news_present_one = self.newsencoder(pred_one.squeeze(1))
+                    score = torch.sum(news_present_one * user_emb, dim=1)
+                    sample_scores.append(score.item())
+                
+                all_scores.append(sample_scores)
+        
+        return all_scores
 
     def get_loss(self, criterion="cross_entropy"):
         if criterion == "cross_entropy":

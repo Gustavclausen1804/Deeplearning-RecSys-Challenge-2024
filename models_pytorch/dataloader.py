@@ -80,41 +80,49 @@ class NRMSDataLoader(NewsrecDataLoader):
             drop_nulls=False,
         )
 
-    def __getitem__(self, idx) -> tuple[tuple[np.ndarray, np.ndarray], np.ndarray]:
-        """
-        Returns:
-            Inputs: (his_input_title, pred_input_title)
-            Targets: batch_y
-        """
-        batch_X = self.X[idx].pipe(self.transform)
-        batch_y = self.y[idx]
+    def __getitem__(self, idx):
+        try:
+            sample_X = self.X[idx].pipe(self.transform)
+            sample_y = self.y[idx]
 
-        if self.eval_mode:
-            repeats = batch_X["n_samples"]
-            batch_y = np.array(batch_y.explode().to_list()).reshape(-1, 1)
-            his_input_title = repeat_by_list_values_from_matrix(
-                batch_X[self.history_column].to_list(),
-                matrix=self.lookup_article_matrix,
-                repeats=repeats,
-            )
-            pred_input_title = self.lookup_article_matrix[
-                batch_X[self.inview_col].explode().to_list()
-            ]
-        else:
-            batch_y = np.array(batch_y.to_list())
-            his_input_title = self.lookup_article_matrix[
-                batch_X[self.history_column].to_list()
-            ]
-            pred_input_title = self.lookup_article_matrix[
-                batch_X[self.inview_col].to_list()
-            ]
-            pred_input_title = np.squeeze(pred_input_title, axis=2)
+            # Extract lists
+            history_list = sample_X[self.history_column].to_list()[0]
+            inview_list = sample_X[self.inview_col].to_list()[0]
 
-        his_input_title = np.squeeze(his_input_title, axis=2)
+            # Check for empty lists
+            if not history_list:
+                print(f"Empty history_list at index {idx}")
+                raise ValueError(f"Empty history_list at index {idx}")
+            if not inview_list:
+                print(f"Empty inview_list at index {idx}")
+                raise ValueError(f"Empty inview_list at index {idx}")
 
-        # Convert to torch tensors
-        his_input_title = torch.tensor(his_input_title, dtype=torch.float32)
-        pred_input_title = torch.tensor(pred_input_title, dtype=torch.float32)
-        batch_y = torch.tensor(batch_y, dtype=torch.float32)
+            # Map IDs to embeddings
+            his_input_title = self.lookup_article_matrix[history_list]
+            pred_input_title = self.lookup_article_matrix[inview_list]
 
-        return (his_input_title, pred_input_title), batch_y
+            # Squeeze singleton dimensions if necessary
+            if his_input_title.ndim > 2:
+                his_input_title = np.squeeze(his_input_title, axis=1)
+            if pred_input_title.ndim > 2:
+                pred_input_title = np.squeeze(pred_input_title, axis=1)
+
+            # Convert to tensors
+            his_input_title = torch.tensor(his_input_title, dtype=torch.float32)
+            pred_input_title = torch.tensor(pred_input_title, dtype=torch.float32)
+
+            # Process sample_y correctly
+            sample_y_list = sample_y.to_list()
+            if not sample_y_list:
+                print(f"Empty sample_y at index {idx}")
+                raise ValueError(f"Empty sample_y at index {idx}")
+
+            sample_y_tensor = torch.tensor(sample_y_list, dtype=torch.float32)
+
+            return (his_input_title, pred_input_title), sample_y_tensor
+        except Exception as e:
+            print(f"Error at index {idx}: {e}")
+            raise
+
+
+

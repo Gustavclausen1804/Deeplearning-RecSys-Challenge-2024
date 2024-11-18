@@ -1,3 +1,6 @@
+## Project created by:
+Gustav Clausen, Oscar Mandrupsen, Rasmus Søndergaard and Miki. 
+
 ## The NRMS paper: 
 https://aclanthology.org/D19-1671.pdf 
 

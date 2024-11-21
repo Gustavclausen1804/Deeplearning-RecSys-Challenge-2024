@@ -37,7 +37,8 @@ class hparams_lstur:
     # MODEL ARCHITECTURE
     cnn_activation: str = "relu"
     type: str = "ini"
-    attention_hidden_dim: int = 200
+    hidden_dim  : int = 5
+    attention_hidden_dim: int = 5
     gru_unit: int = 400
     filter_num: int = 400
     window_size: int = 3
@@ -69,11 +70,11 @@ class hparams_npa:
 class hparams_nrms:
     # INPUT DIMENTIONS:
     title_size: int = DEFAULT_TITLE_SIZE
-    history_size: int = 50
+    history_size: int = 10
     # MODEL ARCHITECTURE
-    head_num: int = 20
-    head_dim: int = 20
-    attention_hidden_dim: int = 200
+    head_num: int = 2
+    head_dim: int = 2
+    attention_hidden_dim: int = 2
     # MODEL OPTIMIZER:
     optimizer: str = "adam"
     loss: str = "cross_entropy_loss"

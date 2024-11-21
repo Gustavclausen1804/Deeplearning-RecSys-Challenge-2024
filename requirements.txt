@@ -7,3 +7,4 @@ transformers
 pyarrow
 tensorboard
 matplotlib
+scikit-learn

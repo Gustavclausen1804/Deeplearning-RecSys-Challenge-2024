@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import torch.cuda.amp as amp
 
 from models_pytorch.layers import AttLayer2, SelfAttention
 
@@ -35,12 +36,9 @@ class UserEncoder(nn.Module):
         #print(f"UserEncoder - his_input_title shape: {his_input_title.shape}")
 
         # Encode each historical title
-        click_title_presents = []
-        for i in range(history_size):
-            title = his_input_title[:, i, :]  # (batch_size, title_size)
-            encoded_title = self.titleencoder(title)  # (batch_size, output_dim)
-            click_title_presents.append(encoded_title)
-        click_title_presents = torch.stack(click_title_presents, dim=1)  # (batch_size, history_size, output_dim)
+        reshaped_input = his_input_title.view(-1, title_size)
+        encoded_titles = self.titleencoder(reshaped_input)
+        click_title_presents = encoded_titles.view(batch_size, history_size, -1)
         #print(f"UserEncoder - click_title_presents shape after encoding: {click_title_presents.shape}")
 
         # Apply self-attention
@@ -87,7 +85,7 @@ class NewsEncoder(nn.Module):
 
 
 class NRMSModel(nn.Module):
-    def __init__(self, hparams, word2vec_embedding=None, word_emb_dim=300, vocab_size=32000, seed=42, device='cuda', fos=2):
+    def __init__(self, hparams, word2vec_embedding=None, word_emb_dim=64, vocab_size=10000, seed=42, device='cuda', fos=2):
         super(NRMSModel, self).__init__()
         self.hparams = hparams
         self.seed = seed
@@ -96,15 +94,16 @@ class NRMSModel(nn.Module):
         np.random.seed(seed)
 
         if word2vec_embedding is None:
-            embedding_layer = nn.Embedding(num_embeddings=vocab_size, embedding_dim=word_emb_dim, padding_idx=0)
+            embedding_layer = nn.Embedding(
+                num_embeddings=vocab_size,  # Reduced from 30522
+                embedding_dim=word_emb_dim, # Reduced from 128
+                padding_idx=0
+            )
         else:
             embedding_layer = nn.Embedding.from_pretrained(
                 embeddings=torch.from_numpy(word2vec_embedding).float(),
                 freeze=False,
-                padding_idx=0
             )
-        self.word_emb_dim = embedding_layer.embedding_dim
-        embedding_layer = embedding_layer.to(device)
 
         # Define NewsEncoder and UserEncoder with device
         self.newsencoder = self._build_newsencoder(embedding_layer)
@@ -112,6 +111,8 @@ class NRMSModel(nn.Module):
         
         # Move entire model to device
         self.to(self.device)
+        self.scaler = amp.GradScaler()
+        self.embedding_cache = {}  # Cache for embeddings during inference
 
     def _build_newsencoder(self, embedding_layer):
         return NewsEncoder(embedding_layer, self.hparams, self.seed, self.device)
@@ -119,30 +120,59 @@ class NRMSModel(nn.Module):
     def _build_userencoder(self, titleencoder):
         return UserEncoder(titleencoder, self.hparams, self.seed, self.device)
 
+    def _batch_encode_news(self, titles):
+        """Batch process all titles at once"""
+        batch_size, num_titles, title_size = titles.size()
+        titles_flat = titles.view(-1, title_size)
+        encoded_flat = self.newsencoder(titles_flat)
+        return encoded_flat.view(batch_size, num_titles, -1)
+
     def forward(self, his_input_title, pred_input_title):
-        # Move input tensors to the correct device
-        his_input_title = his_input_title.to(self.device)
-        pred_input_title = pred_input_title.to(self.device)
+        with torch.cuda.amp.autocast():
+            his_input_title = his_input_title.to(self.device)
+            pred_input_title = pred_input_title.to(self.device)
+            
+            user_present = self.userencoder(his_input_title)
+            news_present = self._batch_encode_news(pred_input_title)
+            
+            # Compute scores using batch matrix multiplication
+            scores = torch.bmm(news_present, user_present.unsqueeze(-1)).squeeze(-1)
+            
+            return scores
+
+    def _cache_key(self, tensor):
+        return hash(tensor.cpu().numpy().tobytes())
+
+    @torch.no_grad()
+    def predict(self, dataloader):
+        self.eval()
+        all_predictions = []
         
-        user_present = self.userencoder(his_input_title)  # (batch_size, output_dim)
-        #print(f"NRMSModel - user_present shape: {user_present.shape}")
+        for batch in dataloader:
+            his_input_title, pred_input_title = batch[0]
+            
+            with amp.autocast():
+                # Move to device and process in batches
+                his_input_title = his_input_title.to(self.device)
+                pred_input_title = pred_input_title.to(self.device)
+                
+                # Get user embeddings for whole batch
+                user_present = self.userencoder(his_input_title)
+                
+                # Process all candidates at once
+                news_present = self._batch_encode_news(pred_input_title)
+                
+                # Compute all scores at once using batch matrix multiplication
+                scores = torch.bmm(news_present, user_present.unsqueeze(-1)).squeeze(-1)
+                
+                # Split scores by user
+                for user_scores in scores:
+                    # Only keep scores for non-padding candidates
+                    mask = (pred_input_title[0] != 0).any(dim=-1)
+                    valid_scores = user_scores[mask].cpu().tolist()
+                    all_predictions.append(valid_scores)
         
-        batch_size, npratio_plus_1, title_size = pred_input_title.size()
-
-        # Encode prediction titles
-        news_present = []
-        for i in range(npratio_plus_1):
-            title = pred_input_title[:, i, :]  # (batch_size, title_size)
-            encoded_title = self.newsencoder(title)  # (batch_size, output_dim)
-            news_present.append(encoded_title)
-        news_present = torch.stack(news_present, dim=1)  # (batch_size, npratio_plus_1, output_dim)
-        #print(f"NRMSModel - news_present shape after encoding: {news_present.shape}")
-
-        # Compute scores using dot product
-        scores = torch.bmm(news_present, user_present.unsqueeze(-1)).squeeze(-1)  # (batch_size, npratio_plus_1)
-        #print(f"NRMSModel - scores shape: {scores.shape}")
-
-        return scores  # (batch_size, npratio_plus_1)
+        return all_predictions
 
     def score(self, his_input_title, pred_input_title_one):
         """Equivalent to TF scorer model for evaluation

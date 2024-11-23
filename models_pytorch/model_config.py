@@ -72,7 +72,7 @@ class hparams_npa:
 class hparams_nrms:
     # INPUT DIMENTIONS:
     title_size: int = 30    # Match DEFAULT_TITLE_SIZE
-    history_size: int = 5   # Keep reduced
+    history_size: int = 10   # Keep reduced
     embedding_dim: int = DEFAULT_EMBEDDING_DIM  # New parameter
     word_emb_dim: int = 8  # New parameter
     vocab_size: int = DEFAULT_VOCAB_SIZE       # New parameter
@@ -87,7 +87,7 @@ class hparams_nrms:
     dropout: float = 0.3
     learning_rate: float = 0.001
     news_output_dim = 5   # Reduced from 32
-    units_per_layer : list[int] = [512, 512, 512]
+    units_per_layer : list[int] = [32, 32, 32]
 
 
 class hparams_nrms_docvec:

@@ -124,7 +124,7 @@ class NRMSDocVecModel(nn.Module):
         return UserEncoderDocVec(titleencoder, self.hparams, self.seed, self.device)
 
     def forward(self, his_input_title, pred_input_title):
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast(enabled=False):
             #print(f"NRMSDocVecModel - Input his_input_title shape: {his_input_title.shape}")
             #print(f"NRMSDocVecModel - Input pred_input_title shape: {pred_input_title.shape}")
             
@@ -190,5 +190,5 @@ class NRMSDocVecModel(nn.Module):
 
     def predict(self, his_input_title, pred_input_title):
         with torch.no_grad():
-            scores = self.forward(his_input_title, pred_input_title)
+            scores = self.forward(his_input_title, pred_input_title)        
             return torch.sigmoid(scores)

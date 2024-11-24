@@ -13,7 +13,7 @@ class NewsEncoderDocVec(nn.Module):
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-        self.output_dim = hparams.get('news_output_dim', 200)
+        self.output_dim = hparams.get('news_output_dim', 200) # TODO: We could just remove this paramter and only use the units per layer. 
         self.units_per_layer = hparams.get('units_per_layer', [512, 512, 512])
 
         layers = []
@@ -63,12 +63,12 @@ class UserEncoderDocVec(nn.Module):
             device=device
         )
         self.attention_layer = AttLayer2(
-            dim=hparams["news_output_dim"],
+            dim=hparams["attention_hidden_dim"],
             seed=seed,
             device=device
         ).to(device)
         self.user_projection = nn.Linear(
-            in_features=hparams["news_output_dim"], 
+            in_features=hparams["attention_hidden_dim"], 
             out_features=hparams["news_output_dim"]
         ).to(device)
 

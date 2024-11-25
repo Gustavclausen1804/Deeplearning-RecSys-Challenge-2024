@@ -1046,19 +1046,17 @@ def add_prediction_scores(
         │ 2   ┆ [4, 5]      ┆ [0.6, 0.7]             │
         └─────┴─────────────┴────────────────────────┘
     """
-    # Create scores list matching structure of inview_col
-    n_articles_per_row = [len(x) for x in df[inview_col]]
-    score_idx = 0
-    scores_list = []
-    
-    for n in n_articles_per_row:
-        row_scores = scores[score_idx:score_idx + n]
-        scores_list.append(row_scores)
-        score_idx += n
-        
-    # Add scores as new column
-    df_with_scores = df.with_columns([
-        pl.Series(name=prediction_scores_col, values=scores_list)
-    ])
-    
-    return df_with_scores
+    GROUPBY_ID = generate_unique_name(df.columns, "_groupby_id")
+    # df_preds = pl.DataFrame()
+    scores = (
+        df.lazy()
+        .select(pl.col(inview_col))
+        .with_row_index(GROUPBY_ID)
+        .explode(inview_col)
+        .with_columns(pl.Series(prediction_scores_col, scores).explode())
+        .group_by(GROUPBY_ID)
+        .agg(inview_col, prediction_scores_col)
+        .sort(GROUPBY_ID)
+        .collect()
+    )
+    return df.with_columns(scores.select(prediction_scores_col)).drop(GROUPBY_ID)

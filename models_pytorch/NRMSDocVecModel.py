@@ -187,7 +187,7 @@ class NRMSDocVecModel(nn.Module):
             return optim.Adam(self.parameters(), lr=lr)
         else:
             raise ValueError(f"Optimizer not defined: {optimizer}")
-    
+
     def predict(self, his_input_title, pred_input_title):
         with torch.no_grad():
             scores = self.forward(his_input_title, pred_input_title)        

@@ -1,5 +1,5 @@
 from .dataloader import (
     NewsrecDataLoader,
-    NRMSDataLoader,
+    NRMSDataSet,
     # Add other classes as needed
 )

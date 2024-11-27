@@ -64,7 +64,7 @@ class NewsrecDataLoader(Dataset):
 
 
 @dataclass
-class NRMSDataLoader(NewsrecDataLoader):
+class NRMSDataSet(NewsrecDataLoader):
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
         return df.pipe(
             map_list_article_id_to_value,
@@ -88,6 +88,8 @@ class NRMSDataLoader(NewsrecDataLoader):
             # Extract lists
             history_list = sample_X[self.history_column].to_list()[0]
             inview_list = sample_X[self.inview_col].to_list()[0]
+            impression_id = sample_X['impression_id'].to_list()[0]  # Extract impression_id
+            impression_id_torch = torch.tensor(impression_id, dtype=torch.int64)
 
             # Check for empty lists
             if not history_list:
@@ -119,7 +121,7 @@ class NRMSDataLoader(NewsrecDataLoader):
 
             sample_y_tensor = torch.tensor(sample_y_list, dtype=torch.float32)
 
-            return (his_input_title, pred_input_title), sample_y_tensor
+            return (his_input_title, pred_input_title), sample_y_tensor, impression_id_torch
         except Exception as e:
             print(f"Error at index {idx}: {e}")
             raise

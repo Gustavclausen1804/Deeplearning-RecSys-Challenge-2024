@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import time
 import torch
 from torch.utils.data import Dataset, DataLoader
 import polars as pl
@@ -65,6 +66,14 @@ class NewsrecDataLoader(Dataset):
 
 @dataclass
 class NRMSDataSet(NewsrecDataLoader):
+    def __post_init__(self):
+        # Initialize parent class attributes first
+        super().__post_init__()
+        
+        print("Starting preprocessing...")
+        # Now preprocess the data
+        self.preprocess_data()
+        
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
         return df.pipe(
             map_list_article_id_to_value,
@@ -79,52 +88,47 @@ class NRMSDataSet(NewsrecDataLoader):
             fill_nulls=self.unknown_index,
             drop_nulls=False,
         )
-
-    def __getitem__(self, idx):
-        try:
-            sample_X = self.X[idx].pipe(self.transform)
+        
+    def preprocess_data(self):
+        print("Preprocessing data...")
+        start_time = time.time()
+        
+        # Transform the entire dataset once
+        self.X = self.transform(self.X)
+        
+        # Preprocess all samples
+        self.samples = []
+        for idx in range(len(self.X)):
+            sample_X = self.X[idx]
             sample_y = self.y[idx]
-
+            
             # Extract lists
-            history_list = sample_X[self.history_column].to_list()[0]
-            inview_list = sample_X[self.inview_col].to_list()[0]
-            impression_id = sample_X['impression_id'].to_list()[0]  # Extract impression_id
-            impression_id_torch = torch.tensor(impression_id, dtype=torch.int64)
-
-            # Check for empty lists
-            if not history_list:
-                print(f"Empty history_list at index {idx}")
-                raise ValueError(f"Empty history_list at index {idx}")
-            if not inview_list:
-                print(f"Empty inview_list at index {idx}")
-                raise ValueError(f"Empty inview_list at index {idx}")
-
+            history_list = sample_X[self.history_column].to_list()[0]  # Added [0]
+            inview_list = sample_X[self.inview_col].to_list()[0]      # Added [0]
+            impression_id = sample_X['impression_id'].to_list()[0]     # Added [0]
+            
             # Map IDs to embeddings
             his_input_title = self.lookup_article_matrix[history_list]
             pred_input_title = self.lookup_article_matrix[inview_list]
-
-            # Squeeze singleton dimensions if necessary
-            if his_input_title.ndim > 2:
-                his_input_title = np.squeeze(his_input_title, axis=1)
-            if pred_input_title.ndim > 2:
-                pred_input_title = np.squeeze(pred_input_title, axis=1)
-
+            
             # Convert to tensors
             his_input_title = torch.tensor(his_input_title, dtype=torch.float32)
+            if his_input_title.ndim > 2:
+                his_input_title = np.squeeze(his_input_title, axis=1)
             pred_input_title = torch.tensor(pred_input_title, dtype=torch.float32)
+            if pred_input_title.ndim > 2:
+                pred_input_title = np.squeeze(pred_input_title, axis=1)
+            sample_y_tensor = torch.tensor(sample_y.to_list(), dtype=torch.float32)  # Added to_list()
+            impression_id_tensor = torch.tensor(impression_id, dtype=torch.int64)
+            
+            self.samples.append((
+                (his_input_title, pred_input_title),
+                sample_y_tensor,
+                impression_id_tensor
+            ))
+        
+        end_time = time.time()
+        print(f"Data preprocessing completed in {end_time - start_time:.2f} seconds.")
 
-            # Process sample_y correctly
-            sample_y_list = sample_y.to_list()
-            if not sample_y_list:
-                print(f"Empty sample_y at index {idx}")
-                raise ValueError(f"Empty sample_y at index {idx}")
-
-            sample_y_tensor = torch.tensor(sample_y_list, dtype=torch.float32)
-
-            return (his_input_title, pred_input_title), sample_y_tensor, impression_id_torch
-        except Exception as e:
-            print(f"Error at index {idx}: {e}")
-            raise
-
-
-
+    def __getitem__(self, idx):
+        return self.samples[idx]

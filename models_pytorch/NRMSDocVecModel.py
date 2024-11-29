@@ -17,7 +17,7 @@ class NewsEncoderDocVec(nn.Module):
         self.units_per_layer = hparams.get('units_per_layer', [512, 512, 512])
 
         layers = []
-        input_dim = hparams.get('title_size', 300)  # Assuming document vector size as input
+        input_dim = hparams.get('title_size', 30)  # Assuming document vector size as input
         for units in self.units_per_layer:
             layers.append(nn.Linear(input_dim, units).to(device))
             layers.append(nn.ReLU().to(device))

@@ -71,7 +71,7 @@ class hparams_npa:
 
 class hparams_nrms:
     # INPUT DIMENTIONS:
-    title_size: int = 30    # Match DEFAULT_TITLE_SIZE
+    title_size: int = 768    # Match DEFAULT_TITLE_SIZE
     history_size: int = 10   # Keep reduced
     embedding_dim: int = DEFAULT_EMBEDDING_DIM  # New parameter
     word_emb_dim: int = 8  # New parameter
@@ -84,7 +84,7 @@ class hparams_nrms:
     # MODEL OPTIMIZER:
     optimizer: str = "adam"
     loss: str = "cross_entropy_loss"
-    dropout: float = 0.6 # DOCVEC
+    dropout: float = 0.2 # DOCVEC
     learning_rate: float = 0.001
     news_output_dim = 64   # Reduced from 32 // DOCVEC
     units_per_layer : list[int] = [64, 64, 64] # DOCVEC

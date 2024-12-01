@@ -5,8 +5,9 @@ from torch.utils.data import Dataset, DataLoader
 import polars as pl
 import numpy as np
 
-from utils._articles_behaviors import map_list_article_id_to_value
+from utils._articles_behaviors import map_list_article_id_to_value_optimized
 from utils._python import (
+    generate_unique_name,
     repeat_by_list_values_from_matrix,
     create_lookup_objects,
 )
@@ -63,7 +64,6 @@ class NewsrecDataLoader(Dataset):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-
 @dataclass
 class NRMSDataSet(NewsrecDataLoader):
     def __post_init__(self):
@@ -75,18 +75,22 @@ class NRMSDataSet(NewsrecDataLoader):
         self.preprocess_data()
         
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
+        BATCH_SIZE = 10000
+        
         return df.pipe(
-            map_list_article_id_to_value,
+            map_list_article_id_to_value_optimized,
             behaviors_column=self.history_column,
             mapping=self.lookup_article_index,
             fill_nulls=self.unknown_index,
             drop_nulls=False,
+            batch_size=BATCH_SIZE
         ).pipe(
-            map_list_article_id_to_value,
+            map_list_article_id_to_value_optimized,
             behaviors_column=self.inview_col,
             mapping=self.lookup_article_index,
             fill_nulls=self.unknown_index,
             drop_nulls=False,
+            batch_size=BATCH_SIZE
         )
         
     def preprocess_data(self):
@@ -98,6 +102,7 @@ class NRMSDataSet(NewsrecDataLoader):
         
         # Preprocess all samples
         self.samples = []
+        print(self.X.shape)
         for idx in range(len(self.X)):
             sample_X = self.X[idx]
             sample_y = self.y[idx]

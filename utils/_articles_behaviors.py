@@ -125,3 +125,38 @@ def map_list_article_id_to_value(
         .join(select_column, on=GROUPBY_ID, how="left")
         .drop(GROUPBY_ID)
     )
+
+def map_list_article_id_to_value_optimized(behaviors: pl.DataFrame, 
+                                         behaviors_column: str,
+                                         mapping: dict[int, pl.Series],
+                                         fill_nulls: any = None,
+                                         drop_nulls: bool = False,
+                                         batch_size: int = 10000) -> pl.DataFrame:
+    
+    GROUPBY_ID = generate_unique_name(behaviors.columns, "_groupby_id")
+    behaviors_with_id = behaviors.with_row_index(GROUPBY_ID)  # Store ID version
+    lf = behaviors_with_id.lazy()
+    results = []
+    
+    for start_idx in range(0, behaviors.height, batch_size):
+        batch = (lf
+                .slice(start_idx, batch_size)
+                .select(pl.col(GROUPBY_ID), pl.col(behaviors_column))
+                .explode(behaviors_column)
+                .with_columns(pl.col(behaviors_column).replace(mapping, default=None))
+                .collect())
+        
+        if drop_nulls:
+            batch = batch.filter(pl.col(behaviors_column).is_not_null())
+        elif fill_nulls is not None:
+            batch = batch.with_columns(pl.col(behaviors_column).fill_null(fill_nulls))
+            
+        batch = batch.group_by(GROUPBY_ID).agg(behaviors_column)
+        results.append(batch)
+    
+    combined = pl.concat(results)
+    
+    return (behaviors_with_id
+            .drop(behaviors_column)
+            .join(combined, on=GROUPBY_ID, how="left")
+            .drop(GROUPBY_ID))

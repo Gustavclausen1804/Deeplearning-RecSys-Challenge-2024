@@ -64,17 +64,45 @@ class NewsEncoder(nn.Module):
         np.random.seed(seed)
         
         self.output_dim = hparams.get('news_output_dim', 200)
-        self.embedding = embedding_layer.to(device)
-        self.fc1 = nn.Linear(self.embedding.embedding_dim, hparams.get('hidden_dim', 128)).to(device)
+        self.attention_hidden_dim = hparams.get('attention_hidden_dim', 128)
+        #self.embedding = embedding_layer.to(device)
+        
+        self.self_attention = SelfAttention(
+            multiheads=hparams["head_num"], 
+            head_dim=hparams["head_dim"], 
+            seed=seed,
+            device=device
+        )
+        
+        self.attention_layer = AttLayer2(
+            dim=self.attention_hidden_dim,
+            seed=seed,
+            device=device
+        ).to(device)
+        
+        
+        
+        self.fc1 = nn.Linear(self.attention_hidden_dim, self.attention_hidden_dim).to(device)
         self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(hparams.get('hidden_dim', 128), self.output_dim).to(device)
+        self.fc2 = nn.Linear(self.attention_hidden_dim, self.output_dim).to(device)
+        
+      
+        
+        
+        
 
     def forward(self, x):
-        x = x.to(self.device)
-        x = x.long()
+        # x = x.to(self.device)
+        # x = x.long()
         
-        embedded = self.embedding(x)
-        embedded = embedded.mean(dim=1)  # Aggregate over sequence length
+        # embedded = self.embedding(x)
+        # embedded = embedded.mean(dim=1)  # Aggregate over sequence length
+        
+        
+        embedded = self.self_attention([x, x, x])
+        embedded = self.attention_layer(embedded)
+        
+        
         
         out = self.fc1(embedded)
         out = self.relu(out)
@@ -144,35 +172,11 @@ class NRMSModel(nn.Module):
         return hash(tensor.cpu().numpy().tobytes())
 
     @torch.no_grad()
-    def predict(self, dataloader):
-        self.eval()
-        all_predictions = []
-        
-        for batch in dataloader:
-            his_input_title, pred_input_title = batch[0]
-            
-            with amp.autocast():
-                # Move to device and process in batches
-                his_input_title = his_input_title.to(self.device)
-                pred_input_title = pred_input_title.to(self.device)
-                
-                # Get user embeddings for whole batch
-                user_present = self.userencoder(his_input_title)
-                
-                # Process all candidates at once
-                news_present = self._batch_encode_news(pred_input_title)
-                
-                # Compute all scores at once using batch matrix multiplication
-                scores = torch.bmm(news_present, user_present.unsqueeze(-1)).squeeze(-1)
-                
-                # Split scores by user
-                for user_scores in scores:
-                    # Only keep scores for non-padding candidates
-                    mask = (pred_input_title[0] != 0).any(dim=-1)
-                    valid_scores = user_scores[mask].cpu().tolist()
-                    all_predictions.append(valid_scores)
-        
-        return all_predictions
+    def predict(self, his_input_title, pred_input_title):
+        with torch.no_grad():
+            scores = self.forward(his_input_title, pred_input_title)        
+            return torch.sigmoid(scores)
+
 
     def score(self, his_input_title, pred_input_title_one):
         """Equivalent to TF scorer model for evaluation
@@ -195,39 +199,6 @@ class NRMSModel(nn.Module):
         # Compute dot product and apply sigmoid
         scores = torch.sum(news_present_one * user_present, dim=1, keepdim=True)
         return torch.sigmoid(scores)
-
-    @torch.no_grad()
-    def predict(self, dataloader):
-        self.eval()
-        all_predictions = []
-        
-        for batch in dataloader:
-            his_input_title, pred_input_title = batch[0]
-            batch_size = his_input_title.size(0)
-            
-            # Move to device
-            his_input_title = his_input_title.to(self.device)
-            pred_input_title = pred_input_title.to(self.device)
-            
-            # Get user embeddings
-            user_present = self.userencoder(his_input_title)
-            
-            # Get predictions for each user in batch
-            for i in range(batch_size):
-                user_scores = []
-                user_emb = user_present[i:i+1]
-                n_candidates = (pred_input_title[i] != 0).any(dim=-1).sum().item()  # Count non-zero rows
-                
-                # Only predict for non-padding candidates
-                for j in range(n_candidates):
-                    title = pred_input_title[i:i+1, j, :]
-                    news_present = self.newsencoder(title)
-                    score = torch.sum(news_present * user_emb, dim=1)
-                    user_scores.append(score.item())
-                
-                all_predictions.append(user_scores)
-        
-        return all_predictions
 
 
 

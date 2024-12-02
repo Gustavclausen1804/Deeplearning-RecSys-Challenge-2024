@@ -80,7 +80,7 @@ class hparams_nrms:
     head_num: int = 4      # Reduced from 4 #docvec
     head_dim: int = 8      # Reduced from 16 #docvec
     attention_hidden_dim: int = 50  # Reduced from 32
-    hidden_dim = 4        # Reduced from 32
+    hidden_dim = 32        # Reduced from 32
     # MODEL OPTIMIZER:
     optimizer: str = "adam"
     loss: str = "cross_entropy_loss"

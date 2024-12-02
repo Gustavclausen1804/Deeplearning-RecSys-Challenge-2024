@@ -160,8 +160,8 @@ class NRMSModel(nn.Module):
             his_input_title = his_input_title.to(self.device)
             pred_input_title = pred_input_title.to(self.device)
             
-            user_present = self.userencoder(his_input_title)
-            news_present = self._batch_encode_news(pred_input_title)
+            user_present = self.userencoder(his_input_title) # browsed news
+            news_present = self._batch_encode_news(pred_input_title) # candidate news
             
             # Compute scores using batch matrix multiplication
             scores = torch.bmm(news_present, user_present.unsqueeze(-1)).squeeze(-1)

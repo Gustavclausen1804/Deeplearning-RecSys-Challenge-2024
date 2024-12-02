@@ -77,18 +77,18 @@ class hparams_nrms:
     word_emb_dim: int = 8  # New parameter
     vocab_size: int = DEFAULT_VOCAB_SIZE       # New parameter
     # MODEL ARCHITECTURE
-    head_num: int = 4      # Reduced from 4 #docvec
-    head_dim: int = 8      # Reduced from 16 #docvec
-    attention_hidden_dim: int = 50  # Reduced from 32
-    hidden_dim = 32        # Reduced from 32
+    head_num: int = 20      # Reduced from 4 #docvec
+    head_dim: int = 20      # Reduced from 16 #docvec
+    attention_hidden_dim: int = 200  # Reduced from 32
+    hidden_dim = 4        # Reduced from 32
     # MODEL OPTIMIZER:
     optimizer: str = "adam"
     loss: str = "cross_entropy_loss"
     dropout: float = 0.2 # DOCVEC
     learning_rate: float = 1e-4
     weight_decay: float = 1e-3
-    news_output_dim = 64   # Reduced from 32 // DOCVEC
-    units_per_layer : list[int] = [64, 64, 64] # DOCVEC
+    news_output_dim = 128   # Reduced from 32 // DOCVEC
+    units_per_layer : list[int] = [128, 128, 128] # DOCVEC
 
 
 class hparams_nrms_docvec:

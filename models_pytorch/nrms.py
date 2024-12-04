@@ -50,7 +50,7 @@ class UserEncoder(nn.Module):
         #print(f"UserEncoder - output shape after attention_layer: {y.shape}")
 
         # Apply the projection if necessary
-        y = self.user_projection(y)  # Now shape will be (batch_size, news_output_dim)
+       # y = self.user_projection(y)  # Now shape will be (batch_size, news_output_dim) # TODO: This linear projection is NOT done in tensorflow, but apperently you usually do it in pytorch.  DONE (REMOVED)
         #print(f"UserEncoder - output shape after user_projection: {y.shape}")
 
         return y
@@ -103,7 +103,7 @@ class NewsEncoder(nn.Module):
         embedded = self.attention_layer(embedded)
         
         
-        
+        # TODO: Tensorflow version does not apply the following two layers.
         out = self.fc1(embedded)
         out = self.relu(out)
         out = self.fc2(out)
@@ -175,7 +175,7 @@ class NRMSModel(nn.Module):
     def predict(self, his_input_title, pred_input_title):
         with torch.no_grad():
             scores = self.forward(his_input_title, pred_input_title)        
-            return torch.sigmoid(scores)
+            return torch.sigmoid(scores) # TODO: Tensorflow uses softmax, we used sigmoid previously. If we don't use sigmoid, the eval fails. . 
 
 
     def score(self, his_input_title, pred_input_title_one):
@@ -198,7 +198,7 @@ class NRMSModel(nn.Module):
         
         # Compute dot product and apply sigmoid
         scores = torch.sum(news_present_one * user_present, dim=1, keepdim=True)
-        return torch.sigmoid(scores)
+        return torch.softmax(scores)
 
 
 

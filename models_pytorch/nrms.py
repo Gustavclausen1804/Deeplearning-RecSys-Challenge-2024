@@ -39,15 +39,15 @@ class UserEncoder(nn.Module):
         # 2. Reshape and encode titles
         total_articles = batch_size * history_size
         reshaped_input = his_input_title.reshape(total_articles, title_size)
-        print(f"reshaped_input shape: {reshaped_input.shape}")
+        # print(f"reshaped_input shape: {reshaped_input.shape}")
         encoded_titles = self.titleencoder(reshaped_input)
-        print(f"encoded_titles shape: {encoded_titles.shape}")
+        # print(f"encoded_titles shape: {encoded_titles.shape}")
         
         # 3. Validate encoder output and reshape
         feature_dim = encoded_titles.size(-1)
-        print(f"feature_dim: {feature_dim}")
+        # print(f"feature_dim: {feature_dim}")
         click_title_presents = encoded_titles.reshape(batch_size, history_size, feature_dim)
-        print(f"click_title_presents shape: {click_title_presents.shape}")
+        # print(f"click_title_presents shape: {click_title_presents.shape}")
         assert click_title_presents.size() == (batch_size, history_size, feature_dim), \
             f"Invalid shape after encoding: {click_title_presents.shape}"
         
@@ -94,7 +94,7 @@ class NewsEncoder(nn.Module):
         
         x.to(self.device)
         x = x.long()
-        print(f"x shape: {x.shape}")
+        # print(f"x shape: {x.shape}")
 
         
         embedded = self.embedding(x)  # 1st layer embedding.  

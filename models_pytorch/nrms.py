@@ -15,8 +15,8 @@ class UserEncoder(nn.Module):
         self.device = device
         self.titleencoder = titleencoder
         self.self_attention = SelfAttention(
-            multiheads=hparams["head_num"], 
-            head_dim=hparams["head_dim"], 
+            embed_dim=hparams["head_dim"], 
+            num_heads=hparams["head_num"], 
             seed=seed,
             device=device
         )
@@ -31,28 +31,38 @@ class UserEncoder(nn.Module):
         ).to(device)
 
     def forward(self, his_input_title):
+        # 1. Input validation and device placement
         his_input_title = his_input_title.to(self.device)
         batch_size, history_size, title_size = his_input_title.size()
-        #print(f"UserEncoder - his_input_title shape: {his_input_title.shape}")
-
-        # Encode each historical title
-        reshaped_input = his_input_title.view(-1, title_size)
-        encoded_titles = self.titleencoder(reshaped_input)
-        click_title_presents = encoded_titles.view(batch_size, history_size, -1)
-        #print(f"UserEncoder - click_title_presents shape after encoding: {click_title_presents.shape}")
-
-        # Apply self-attention
-        y = self.self_attention([click_title_presents, click_title_presents, click_title_presents])  # (batch_size, history_size, output_dim)
-        #print(f"UserEncoder - output shape after self_attention: {y.shape}")
+        assert len(his_input_title.shape) == 3, f"Expected 3D input, got shape {his_input_title.shape}"
         
-        # Apply corrected attention layer
-        y = self.attention_layer(y)  # (batch_size, news_output_dim)
-        #print(f"UserEncoder - output shape after attention_layer: {y.shape}")
-
-        # Apply the projection if necessary
-       # y = self.user_projection(y)  # Now shape will be (batch_size, news_output_dim) # TODO: This linear projection is NOT done in tensorflow, but apperently you usually do it in pytorch.  DONE (REMOVED)
-        #print(f"UserEncoder - output shape after user_projection: {y.shape}")
-
+        # 2. Reshape and encode titles
+        total_articles = batch_size * history_size
+        reshaped_input = his_input_title.reshape(total_articles, title_size)
+        print(f"reshaped_input shape: {reshaped_input.shape}")
+        encoded_titles = self.titleencoder(reshaped_input)
+        print(f"encoded_titles shape: {encoded_titles.shape}")
+        
+        # 3. Validate encoder output and reshape
+        feature_dim = encoded_titles.size(-1)
+        print(f"feature_dim: {feature_dim}")
+        click_title_presents = encoded_titles.reshape(batch_size, history_size, feature_dim)
+        print(f"click_title_presents shape: {click_title_presents.shape}")
+        assert click_title_presents.size() == (batch_size, history_size, feature_dim), \
+            f"Invalid shape after encoding: {click_title_presents.shape}"
+        
+        # 4. Apply self-attention (Q=K=V)
+        y = self.self_attention(
+            click_title_presents, 
+            click_title_presents, 
+            click_title_presents
+        )
+        assert y.size(0) == batch_size, f"Lost batch dimension in self-attention"
+        
+        # 5. Apply attention aggregation
+        y = self.attention_layer(y)
+        assert len(y.shape) == 2, f"Expected 2D output, got shape {y.shape}"
+        
         return y
 
 
@@ -65,11 +75,11 @@ class NewsEncoder(nn.Module):
         
         self.output_dim = hparams.get('news_output_dim', 200)
         self.attention_hidden_dim = hparams.get('attention_hidden_dim', 128)
-        #self.embedding = embedding_layer.to(device)
+        self.embedding = embedding_layer.to(device)
         
         self.self_attention = SelfAttention(
-            multiheads=hparams["head_num"], 
-            head_dim=hparams["head_dim"], 
+            embed_dim=hparams["head_dim"],
+            num_heads=hparams["head_num"], 
             seed=seed,
             device=device
         )
@@ -80,36 +90,19 @@ class NewsEncoder(nn.Module):
             device=device
         ).to(device)
         
-        
-        
-        self.fc1 = nn.Linear(self.attention_hidden_dim, self.attention_hidden_dim).to(device)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(self.attention_hidden_dim, self.output_dim).to(device)
-        
-      
-        
-        
-        
-
     def forward(self, x):
-        # x = x.to(self.device)
-        # x = x.long()
         
-        # embedded = self.embedding(x)
-        # embedded = embedded.mean(dim=1)  # Aggregate over sequence length
+        x.to(self.device)
+        x = x.long()
+        print(f"x shape: {x.shape}")
+
         
+        embedded = self.embedding(x)  # 1st layer embedding.  
+        mask = (x == -1)  # Create mask for padding             
+        atten_output = self.self_attention(embedded, embedded, embedded, mask=mask) # 2nd layer multihead attention
+        r = self.attention_layer(atten_output) # 3rd layer attention layer
         
-        embedded = self.self_attention([x, x, x])
-        embedded = self.attention_layer(embedded)
-        
-        
-        # TODO: Tensorflow version does not apply the following two layers.
-        out = self.fc1(embedded)
-        out = self.relu(out)
-        out = self.fc2(out)
-        
-        #print(f"NewsEncoder - output shape: {out.shape}")
-        return out
+        return r
 
 
 class NRMSModel(nn.Module):

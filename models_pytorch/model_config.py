@@ -71,14 +71,14 @@ class hparams_npa:
 
 class hparams_nrms:
     # INPUT DIMENTIONS:
-    title_size: int = 24    # Match DEFAULT_TITLE_SIZE
+    title_size: int = 30    # Match DEFAULT_TITLE_SIZE
     # history_size: int = 10   # Keep reduced
     embedding_dim: int = DEFAULT_EMBEDDING_DIM  # New parameter
     word_emb_dim: int = 8  # New parameter
     vocab_size: int = DEFAULT_VOCAB_SIZE       # New parameter
     # MODEL ARCHITECTURE
-    head_num: int = 20      # Reduced from 4 #docvec
-    head_dim: int = 20      # Reduced from 16 #docvec
+    head_num: int = 10      # Reduced from 4 #docvec
+    head_dim: int = 30      # Reduced from 16 #docvec
     attention_hidden_dim: int = 200  # Reduced from 32
     hidden_dim = 4        # Reduced from 32
     # MODEL OPTIMIZER:
@@ -87,7 +87,7 @@ class hparams_nrms:
     dropout: float = 0.2 # DOCVEC
     learning_rate: float = 1e-4
     weight_decay: float = 1e-3
-    news_output_dim = 128   # Reduced from 32 // DOCVEC
+    news_output_dim = 768   # Reduced from 32 // DOCVEC
     units_per_layer : list[int] = [128, 128, 128] # DOCVEC
 
 

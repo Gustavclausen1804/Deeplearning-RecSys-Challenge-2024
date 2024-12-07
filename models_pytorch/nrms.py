@@ -67,7 +67,7 @@ class UserEncoder(nn.Module):
 
 
 class NewsEncoder(nn.Module):
-    def __init__(self, embedding_layer, hparams, seed=42, device='cuda'):
+    def __init__(self, embedding_layer, hparams, seed=42, device='cuda', feed_forward_layers_after_3rd_layer=True):
         super(NewsEncoder, self).__init__()
         self.device = device
         torch.manual_seed(seed)
@@ -91,6 +91,26 @@ class NewsEncoder(nn.Module):
             device=device
         ).to(device)
         
+        self.feed_forward_layers_after_3rd_layer = feed_forward_layers_after_3rd_layer
+        
+        self.units_per_layer = hparams.get('units_per_layer', [128, 128, 128])
+        layers = []
+        input_dim = self.output_dim  # Assuming document vector size as input
+        for units in self.units_per_layer:
+            layers.append(nn.Linear(input_dim, units).to(device))
+            layers.append(nn.ReLU().to(device))
+            layers.append(nn.BatchNorm1d(units).to(device))
+            layers.append(nn.Dropout(hparams.get('dropout', 0.2)).to(device))
+            input_dim = units
+
+        # Final output layer
+        layers.append(nn.Linear(input_dim, self.output_dim).to(device))
+        layers.append(nn.ReLU().to(device))
+        self.feedforward = nn.Sequential(*layers)
+        
+        
+
+        
     def forward(self, x):
         
         x.to(self.device)
@@ -102,6 +122,11 @@ class NewsEncoder(nn.Module):
         mask = (x == -1)  # Create mask for padding             
         atten_output = self.self_attention(embedded, embedded, embedded, mask=mask) # 2nd layer multihead attention
         r = self.attention_layer(atten_output) # 3rd layer attention layer
+        
+        if (self.feed_forward_layers_after_3rd_layer):
+            r = self.feedforward(r)  # 4th layer feedforward network
+        
+        
         
         return r
 

@@ -13,11 +13,15 @@ class NewsEncoderDocVec(nn.Module):
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-        self.output_dim = hparams.get('news_output_dim', 200) # TODO: We could just remove this paramter and only use the units per layer. 
+        # Set output_dim = head_num * head_dim exactly as in TF
+        head_num = hparams["head_num"]
+        head_dim = hparams["head_dim"]
+        self.output_dim = head_num * head_dim
+
         self.units_per_layer = hparams.get('units_per_layer', [512, 512, 512])
+        input_dim = hparams.get('embedding_dim', 30)
 
         layers = []
-        input_dim = hparams.get('title_size', 30)  # Assuming document vector size as input
         for units in self.units_per_layer:
             layers.append(nn.Linear(input_dim, units).to(device))
             layers.append(nn.ReLU().to(device))
@@ -25,14 +29,14 @@ class NewsEncoderDocVec(nn.Module):
             layers.append(nn.Dropout(hparams.get('dropout', 0.2)).to(device))
             input_dim = units
 
-        # Final output layer
+        # Final layer matches TF dimension
         layers.append(nn.Linear(input_dim, self.output_dim).to(device))
         layers.append(nn.ReLU().to(device))
 
         self.model = nn.Sequential(*layers)
 
+
     def forward(self, x):
-        #print(f"NewsEncoderDocVec - Input shape: {x.shape}")
         x = x.to(self.device)
 
         if len(x.shape) == 3:  # Handle batched input with multiple titles
@@ -43,12 +47,10 @@ class NewsEncoderDocVec(nn.Module):
             num_titles = None
 
         out = self.model(x)
-        #print(f"NewsEncoderDocVec - Output shape before reshaping: {out.shape}")
 
         if batch_size is not None and num_titles is not None:
             out = out.view(batch_size, num_titles, -1)
 
-        #print(f"NewsEncoderDocVec - Output shape after reshaping: {out.shape}")
         return out
 
 class UserEncoderDocVec(nn.Module):
@@ -67,42 +69,27 @@ class UserEncoderDocVec(nn.Module):
             seed=seed,
             device=device
         ).to(device)
-        self.user_projection = nn.Linear(
-            in_features=hparams["attention_hidden_dim"], 
-            out_features=hparams["news_output_dim"]
-        ).to(device)
+
+        # Remove the user_projection layer entirely
+        # The TF version returns the output of AttLayer2 directly as user embedding.
+        # Ensure that hparams["attention_hidden_dim"] == hparams["head_num"] * hparams["head_dim"]
+        # or adjust as needed based on your TF code specifics.
 
     def forward(self, his_input_title):
-        #print(f"UserEncoderDocVec - Input shape: {his_input_title.shape}")
         his_input_title = his_input_title.to(self.device)
         batch_size, history_size, docvec_dim = his_input_title.size()
-        #print(f"UserEncoderDocVec - Reshaped input dimensions: batch_size={batch_size}, history_size={history_size}, docvec_dim={docvec_dim}")
+        encoded_titles = self.titleencoder(his_input_title)
+        click_title_presents = encoded_titles
 
-        # Encode each historical document vector
-        reshaped_input = his_input_title.view(-1, docvec_dim)
-        #print(f"UserEncoderDocVec - Reshaped input for titleencoder: {reshaped_input.shape}")
-        encoded_titles = self.titleencoder(reshaped_input)
-        #print(f"UserEncoderDocVec - Encoded titles shape: {encoded_titles.shape}")
-        click_title_presents = encoded_titles.view(batch_size, history_size, -1)
-        #print(f"UserEncoderDocVec - Click title presentations shape: {click_title_presents.shape}")
-
-        # Apply self-attention
         y = self.self_attention([click_title_presents, click_title_presents, click_title_presents])
-        #print(f"UserEncoderDocVec - Output after self-attention: {y.shape}")
-        
-        # Apply attention layer
         y = self.attention_layer(y)
-        #print(f"UserEncoderDocVec - Output after attention layer: {y.shape}")
-
-        # Apply projection
-        y = self.user_projection(y)
-        #print(f"UserEncoderDocVec - Output after projection: {y.shape}")
 
         return y
 
+
 class NRMSDocVecModel(nn.Module):
     def __init__(self, hparams, seed=42, device='cuda'):
-        super(NRMSDocVecModel, self).__init__()
+        super().__init__()
         self.hparams = hparams
         self.seed = seed
         self.device = device
@@ -175,18 +162,17 @@ class NRMSDocVecModel(nn.Module):
     def get_loss(self, criterion="cross_entropy"):
         #print(f"NRMSDocVecModel - Loss function: {criterion}")
         if criterion == "cross_entropy":
-            return nn.CrossEntropyLoss().to(self.device)
+            return nn.CrossEntropyLoss(ignore_index=-1).to(self.device)
         elif criterion == "log_loss":
             return nn.BCELoss().to(self.device)
         else:
             raise ValueError(f"Loss function not defined: {criterion}")
 
-    def get_optimizer(self, optimizer="adam", lr=1e-3):
-        #print(f"NRMSDocVecModel - Optimizer: {optimizer}, Learning rate: {lr}")
-        if optimizer == "adam":
-            return optim.Adam(self.parameters(), lr=lr)
+    def get_optimizer(self, hparams_nrms):
+        if hparams_nrms.__dict__['optimizer'] == "adam":
+            return optim.Adam(self.parameters(), lr=hparams_nrms.__dict__['learning_rate'], weight_decay=hparams_nrms.__dict__['weight_decay'])
         else:
-            raise ValueError(f"Optimizer not defined: {optimizer}")
+            raise ValueError(f"Optimizer not defined")
 
     def predict(self, his_input_title, pred_input_title):
         with torch.no_grad():

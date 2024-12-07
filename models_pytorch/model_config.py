@@ -77,9 +77,9 @@ class hparams_nrms:
     word_emb_dim: int = 8  # New parameter
     vocab_size: int = DEFAULT_VOCAB_SIZE       # New parameter
     # MODEL ARCHITECTURE
-    head_num: int = 10      # Reduced from 4 #docvec
-    head_dim: int = 30      # Reduced from 16 #docvec
-    attention_hidden_dim: int = 200  # Reduced from 32
+    head_num: int = 16      # Reduced from 4 #docvec
+    head_dim: int = 768      # Reduced from 16 #docvec
+    attention_hidden_dim: int = 128  # Reduced from 32
     hidden_dim = 4        # Reduced from 32
     # MODEL OPTIMIZER:
     optimizer: str = "adam"

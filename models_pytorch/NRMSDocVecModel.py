@@ -57,14 +57,14 @@ class UserEncoderDocVec(nn.Module):
         self.device = device
         self.titleencoder = titleencoder
         self.self_attention = SelfAttention(
-            multiheads=hparams["head_num"], 
-            head_dim=hparams["head_dim"], 
+            num_heads=hparams["head_num"], 
+            embed_dim=hparams["head_dim"], 
             seed=seed,
             device=device
         )
         self.attention_layer = AttLayer2(
-            dim=hparams["attention_hidden_dim"],
-            seed=seed,
+            dim=hparams["news_output_dim"],
+            hidden_dim=hparams["attention_hidden_dim"],
             device=device
         ).to(device)
         self.user_projection = nn.Linear(
@@ -87,7 +87,7 @@ class UserEncoderDocVec(nn.Module):
         #print(f"UserEncoderDocVec - Click title presentations shape: {click_title_presents.shape}")
 
         # Apply self-attention
-        y = self.self_attention([click_title_presents, click_title_presents, click_title_presents])
+        y = self.self_attention(click_title_presents, click_title_presents, click_title_presents)
         #print(f"UserEncoderDocVec - Output after self-attention: {y.shape}")
         
         # Apply attention layer

@@ -22,7 +22,7 @@ class UserEncoder(nn.Module):
         )
         self.attention_layer = AttLayer2(
             dim=hparams["news_output_dim"],
-            seed=seed,
+            hidden_dim=hparams["attention_hidden_dim"],
             device=device
         ).to(device)
         self.user_projection = nn.Linear(
@@ -75,6 +75,7 @@ class NewsEncoder(nn.Module):
         
         self.output_dim = hparams.get('news_output_dim', 200)
         self.attention_hidden_dim = hparams.get('attention_hidden_dim', 128)
+        
         self.embedding = embedding_layer.to(device)
         
         self.self_attention = SelfAttention(
@@ -85,8 +86,8 @@ class NewsEncoder(nn.Module):
         )
         
         self.attention_layer = AttLayer2(
-            dim=self.attention_hidden_dim,
-            seed=seed,
+            dim=self.output_dim,
+            hidden_dim=self.attention_hidden_dim,
             device=device
         ).to(device)
         
@@ -123,7 +124,7 @@ class NRMSModel(nn.Module):
         else:
             embedding_layer = nn.Embedding.from_pretrained(
                 embeddings=torch.from_numpy(word2vec_embedding).float(),
-                freeze=True,
+                freeze=False,
             )
 
         # Define NewsEncoder and UserEncoder with device

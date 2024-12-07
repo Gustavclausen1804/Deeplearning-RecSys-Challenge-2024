@@ -61,34 +61,63 @@ class SelfAttention(nn.Module):
         return output
 
 
-
 class AttLayer2(nn.Module):
-    def __init__(self, dim, device='cuda', seed=0):
+    def __init__(self, dim, hidden_dim, device='cuda'):
         super().__init__()
         self.device = device
-        self.proj = nn.Linear(in_features=dim, out_features=1, bias=False).to(device)
+        # V_w would be a matrix: dim -> hidden_dim
+        self.V_w = nn.Linear(dim, hidden_dim, bias=True).to(device)
+        # q_w would be a vector: hidden_dim -> 1
+        self.q_w = nn.Linear(hidden_dim, 1, bias=False).to(device)
+        # Note: The bias in V_w corresponds to v_w in the formula.
 
     def forward(self, inputs, mask=None):
         # inputs: (batch_size, seq_length, dim)
+        # Compute: tanh(V_w * h_i + v_w)
+        x = torch.tanh(self.V_w(inputs))  # (batch_size, seq_length, hidden_dim)
         
-        # 1. Compute attention scores
-        attention_scores = self.proj(inputs)  # (batch_size, seq_length, 1)
-        attention_scores = attention_scores.squeeze(-1)  # (batch_size, seq_length)
+        # Compute q_w^T * tanh(...)
+        attention_scores = self.q_w(x).squeeze(-1)  # (batch_size, seq_length)
         
-        # 2. Apply mask if provided
         if mask is not None:
             attention_scores = attention_scores.masked_fill(~mask, float('-inf'))
+
+        attention_weights = torch.softmax(attention_scores, dim=-1) # (batch_size, seq_length)
         
-        # 3. Apply softmax to get attention weights
-        attention_weights = torch.softmax(attention_scores, dim=-1)  # Use dim=-1 instead of dim=1
-        
-        # 4. Apply attention weights to input
         weighted_input = inputs * attention_weights.unsqueeze(-1)
-        
-        # 5. Sum along sequence dimension
         context = weighted_input.sum(dim=1)  # (batch_size, dim)
         
         return context
+
+
+### 
+# class AttLayer2(nn.Module):
+#     def __init__(self, dim, device='cuda', seed=0):
+#         super().__init__()
+#         self.device = device
+#         self.proj = nn.Linear(in_features=dim, out_features=1, bias=False).to(device)
+
+#     def forward(self, inputs, mask=None):
+#         # inputs: (batch_size, seq_length, dim)
+        
+#         # 1. Compute attention scores
+#         attention_scores = self.proj(inputs)  # (batch_size, seq_length, 1)
+#         attention_scores = attention_scores.squeeze(-1)  # (batch_size, seq_length)
+        
+#         # 2. Apply mask if provided
+#         if mask is not None:
+#             attention_scores = attention_scores.masked_fill(~mask, float('-inf'))
+        
+#         # 3. Apply softmax to get attention weights
+#         attention_weights = torch.softmax(attention_scores, dim=-1)  # Use dim=-1 instead of dim=1
+        
+#         # 4. Apply attention weights to input
+#         weighted_input = inputs * attention_weights.unsqueeze(-1)
+        
+#         # 5. Sum along sequence dimension
+#         context = weighted_input.sum(dim=1)  # (batch_size, dim)
+        
+#         return context
 
 
 

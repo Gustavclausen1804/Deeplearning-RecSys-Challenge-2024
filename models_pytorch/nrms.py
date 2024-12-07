@@ -29,7 +29,7 @@ class UserEncoder(nn.Module):
             in_features=hparams["news_output_dim"], 
             out_features=hparams["news_output_dim"]
         ).to(device)
-
+    # User encoder forward pass
     def forward(self, his_input_title):
         # 1. Input validation and device placement
         his_input_title = his_input_title.to(self.device)
@@ -110,7 +110,7 @@ class NewsEncoder(nn.Module):
         
         
 
-        
+    # forward pass for news encoder   
     def forward(self, x):
         
         x.to(self.device)
@@ -119,8 +119,7 @@ class NewsEncoder(nn.Module):
 
         
         embedded = self.embedding(x)  # 1st layer embedding.  
-        mask = (x == -1)  # Create mask for padding             
-        atten_output = self.self_attention(embedded, embedded, embedded, mask=mask) # 2nd layer multihead attention
+        atten_output = self.self_attention(embedded, embedded, embedded) # 2nd layer multihead attention
         r = self.attention_layer(atten_output) # 3rd layer attention layer
         
         if (self.feed_forward_layers_after_3rd_layer):
@@ -149,7 +148,7 @@ class NRMSModel(nn.Module):
         else:
             embedding_layer = nn.Embedding.from_pretrained(
                 embeddings=torch.from_numpy(word2vec_embedding).float(),
-                freeze=False,
+                freeze=True,
             )
 
         # Define NewsEncoder and UserEncoder with device

@@ -13,40 +13,59 @@ class NewsEncoderDocVec(nn.Module):
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-        # Set output_dim = head_num * head_dim exactly as in TF
         head_num = hparams["head_num"]
         head_dim = hparams["head_dim"]
         self.output_dim = head_num * head_dim
-
+        
         self.units_per_layer = hparams.get('units_per_layer', [512, 512, 512])
         input_dim = hparams.get('embedding_dim', 30)
-
-        layers = []
+        
+        # Create layers with residual connections
+        self.layers = nn.ModuleList()
         for units in self.units_per_layer:
-            layers.append(nn.Linear(input_dim, units).to(device))
-            layers.append(nn.ReLU().to(device))
-            layers.append(nn.BatchNorm1d(units).to(device))
-            layers.append(nn.Dropout(hparams.get('dropout', 0.2)).to(device))
+            # Each residual block
+            block = nn.Sequential(
+                nn.Linear(input_dim, units),
+                nn.ReLU(),
+                nn.LayerNorm(units),  # Layer Normalization instead of Batch Norm
+                nn.Dropout(hparams.get('dropout', 0.2))
+            ).to(device)
+            self.layers.append(block)
+            
+            # If dimensions don't match, add a projection layer for residual connection
+            if input_dim != units:
+                self.layers.append(nn.Linear(input_dim, units).to(device))
+            
             input_dim = units
 
-        # Final layer matches TF dimension
-        layers.append(nn.Linear(input_dim, self.output_dim).to(device))
-        layers.append(nn.ReLU().to(device))
-
-        self.model = nn.Sequential(*layers)
-
+        # Final layer
+        self.final = nn.Sequential(
+            nn.Linear(input_dim, self.output_dim),
+            nn.ReLU()
+        ).to(device)
 
     def forward(self, x):
         x = x.to(self.device)
-
-        if len(x.shape) == 3:  # Handle batched input with multiple titles
+        
+        if len(x.shape) == 3:
             batch_size, num_titles, docvec_dim = x.shape
-            x = x.view(-1, docvec_dim)  # Flatten to process all titles together
+            x = x.view(-1, docvec_dim)
         else:
             batch_size = None
             num_titles = None
 
-        out = self.model(x)
+        # Apply residual connections
+        for i in range(0, len(self.layers), 2):
+            identity = x
+            x = self.layers[i](x)
+            
+            # If dimensions don't match, use projection
+            if i+1 < len(self.layers):
+                identity = self.layers[i+1](identity)
+            
+            x = x + identity  # Residual connection
+
+        out = self.final(x)
 
         if batch_size is not None and num_titles is not None:
             out = out.view(batch_size, num_titles, -1)

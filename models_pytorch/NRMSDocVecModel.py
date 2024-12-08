@@ -116,8 +116,6 @@ class UserEncoderDocVec(nn.Module):
         
         enriched_titles = encoded_titles * weights
 
-        enriched_titles = encoded_titles * weights
-
         # Apply self-attention and attention layer
         y = self.self_attention([enriched_titles, enriched_titles, enriched_titles])
         y = self.attention_layer(y)

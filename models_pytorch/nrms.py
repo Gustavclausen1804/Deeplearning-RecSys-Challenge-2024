@@ -94,19 +94,21 @@ class NewsEncoder(nn.Module):
         self.feed_forward_layers_after_3rd_layer = feed_forward_layers_after_3rd_layer
         
         self.units_per_layer = hparams.get('units_per_layer', [128, 128, 128])
-        layers = []
-        input_dim = self.output_dim  # Assuming document vector size as input
-        for units in self.units_per_layer:
-            layers.append(nn.Linear(input_dim, units).to(device))
-            layers.append(nn.ReLU().to(device))
-            layers.append(nn.BatchNorm1d(units).to(device))
-            layers.append(nn.Dropout(hparams.get('dropout', 0.2)).to(device))
-            input_dim = units
+        self.dropout = hparams.get('dropout', 0.2)
+        if (self.feed_forward_layers_after_3rd_layer):
+            layers = []
+            input_dim = self.output_dim  # Assuming document vector size as input
+            for units in self.units_per_layer:
+                layers.append(nn.Linear(input_dim, units).to(device))
+                layers.append(nn.ReLU().to(device))
+                layers.append(nn.BatchNorm1d(units).to(device))
+                layers.append(nn.Dropout(hparams.get('dropout', 0.2)).to(device))
+                input_dim = units
 
-        # Final output layer
-        layers.append(nn.Linear(input_dim, self.output_dim).to(device))
-        layers.append(nn.ReLU().to(device))
-        self.feedforward = nn.Sequential(*layers)
+            # Final output layer
+            layers.append(nn.Linear(input_dim, self.output_dim).to(device))
+            layers.append(nn.ReLU().to(device))
+            self.feedforward = nn.Sequential(*layers)
         
         
 
@@ -120,6 +122,7 @@ class NewsEncoder(nn.Module):
         
         embedded = self.embedding(x)  # 1st layer embedding.  
         atten_output = self.self_attention(embedded, embedded, embedded) # 2nd layer multihead attention
+        atten_output = nn.Dropout(self.dropout)(atten_output)
         r = self.attention_layer(atten_output) # 3rd layer attention layer
         
         if (self.feed_forward_layers_after_3rd_layer):
@@ -131,11 +134,12 @@ class NewsEncoder(nn.Module):
 
 
 class NRMSModel(nn.Module):
-    def __init__(self, hparams, word2vec_embedding=None, word_emb_dim=64, vocab_size=10000, seed=42, device='cuda', fos=2):
+    def __init__(self, hparams, word2vec_embedding=None, word_emb_dim=64, vocab_size=30000, seed=42, device='cuda', fos=2, feed_forward_layers_after_3rd_layer=True):
         super(NRMSModel, self).__init__()
         self.hparams = hparams
         self.seed = seed
         self.device = device
+        self.feed_forward_layers_after_3rd_layer = feed_forward_layers_after_3rd_layer
         torch.manual_seed(seed)
         np.random.seed(seed)
 
@@ -148,7 +152,7 @@ class NRMSModel(nn.Module):
         else:
             embedding_layer = nn.Embedding.from_pretrained(
                 embeddings=torch.from_numpy(word2vec_embedding).float(),
-                freeze=True,
+                freeze=False,
             )
 
         # Define NewsEncoder and UserEncoder with device
@@ -161,7 +165,7 @@ class NRMSModel(nn.Module):
         self.embedding_cache = {}  # Cache for embeddings during inference
 
     def _build_newsencoder(self, embedding_layer):
-        return NewsEncoder(embedding_layer, self.hparams, self.seed, self.device)
+        return NewsEncoder(embedding_layer, self.hparams, self.seed, self.device, self.feed_forward_layers_after_3rd_layer)
 
     def _build_userencoder(self, titleencoder):
         return UserEncoder(titleencoder, self.hparams, self.seed, self.device)

@@ -73,10 +73,10 @@ class NewsEncoderDocVec(nn.Module):
         return out
 
 class UserEncoderDocVec(nn.Module):
-    def __init__(self, titleencoder, hparams, seed, device='cuda'):
+    def __init__(self, news_encoder, hparams, seed, device='cuda'):
         super(UserEncoderDocVec, self).__init__()
         self.device = device
-        self.titleencoder = titleencoder
+        self.news_encoder = news_encoder
         self.self_attention = SelfAttention(
             multiheads=hparams["head_num"], 
             head_dim=hparams["head_dim"], 
@@ -89,18 +89,37 @@ class UserEncoderDocVec(nn.Module):
             device=device
         ).to(device)
 
-        # Remove the user_projection layer entirely
-        # The TF version returns the output of AttLayer2 directly as user embedding.
-        # Ensure that hparams["attention_hidden_dim"] == hparams["head_num"] * hparams["head_dim"]
-        # or adjust as needed based on your TF code specifics.
+        # Time embedding module
+        # We choose a small MLP that maps a scalar time delta to the same dimension as articles.
+        time_embedding_dim = hparams["head_num"] * hparams["head_dim"]
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, time_embedding_dim),
+            nn.ReLU(),
+            nn.Linear(time_embedding_dim, time_embedding_dim)
+        ).to(device)
 
-    def forward(self, his_input_title):
+    def forward(self, his_input_title, his_input_time):
         his_input_title = his_input_title.to(self.device)
-        batch_size, history_size, docvec_dim = his_input_title.size()
-        encoded_titles = self.titleencoder(his_input_title)
-        click_title_presents = encoded_titles
+        his_input_time = his_input_time.to(self.device).unsqueeze(-1)  # [batch_size, history_size, 1]
 
-        y = self.self_attention([click_title_presents, click_title_presents, click_title_presents])
+        # Encode titles
+        encoded_titles = self.news_encoder(his_input_title)
+
+        # Normalize timestamps
+        mean_t = his_input_time.mean()
+        std_t = his_input_time.std() + 1e-5
+        his_input_time = (his_input_time - mean_t) / std_t
+
+        weights = 1 - his_input_time
+        
+        weights = weights.expand(-1, -1, encoded_titles.size(-1))
+        
+        enriched_titles = encoded_titles * weights
+
+        enriched_titles = encoded_titles * weights
+
+        # Apply self-attention and attention layer
+        y = self.self_attention([enriched_titles, enriched_titles, enriched_titles])
         y = self.attention_layer(y)
 
         return y
@@ -115,68 +134,41 @@ class NRMSDocVecModel(nn.Module):
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-        # Define NewsEncoder and UserEncoder with document vector adaptation
         self.newsencoder = self._build_newsencoder()
         self.userencoder = self._build_userencoder(self.newsencoder)
 
-        # Move model to device
         self.to(self.device)
         self.scaler = amp.GradScaler()
 
     def _build_newsencoder(self):
         return NewsEncoderDocVec(self.hparams, self.seed, self.device)
 
-    def _build_userencoder(self, titleencoder):
-        return UserEncoderDocVec(titleencoder, self.hparams, self.seed, self.device)
+    def _build_userencoder(self, news_encoder):
+        return UserEncoderDocVec(news_encoder, self.hparams, self.seed, self.device)
 
-    def forward(self, his_input_title, pred_input_title):
+    def forward(self, his_input_title, his_input_time, pred_input_title):
         with torch.cuda.amp.autocast(enabled=False):
-            #print(f"NRMSDocVecModel - Input his_input_title shape: {his_input_title.shape}")
-            #print(f"NRMSDocVecModel - Input pred_input_title shape: {pred_input_title.shape}")
-            
             his_input_title = his_input_title.to(self.device)
+            his_input_time = his_input_time.to(self.device)
             pred_input_title = pred_input_title.to(self.device)
 
-            user_present = self.userencoder(his_input_title)
-            #print(f"NRMSDocVecModel - User presentation shape: {user_present.shape}")
-
+            user_present = self.userencoder(his_input_title, his_input_time)
             news_present = self.newsencoder(pred_input_title)
-            #print(f"NRMSDocVecModel - News presentation shape: {news_present.shape}")
 
-            # Ensure proper dimensions for batch matrix multiplication
-            if len(news_present.shape) == 2:  # If flattened, reshape to 3D
+            if len(news_present.shape) == 2: 
                 batch_size = his_input_title.size(0)
                 num_titles = pred_input_title.size(1)
                 news_present = news_present.view(batch_size, num_titles, -1)
 
-            #print(f"NRMSDocVecModel - Reshaped news presentation shape: {news_present.shape}")
-
-            # Compute scores
-            try:
-                scores = torch.bmm(news_present, user_present.unsqueeze(-1)).squeeze(-1)
-                #print(f"NRMSDocVecModel - Scores shape: {scores.shape}")
-            except RuntimeError as e:
-                #print(f"Error during batch matrix multiplication: {e}")
-                #print(f"news_present shape: {news_present.shape}, user_present shape: {user_present.unsqueeze(-1).shape}")
-                raise
-
+            scores = torch.bmm(news_present, user_present.unsqueeze(-1)).squeeze(-1)
             return scores
 
-    def score(self, his_input_title, pred_input_title_one):
-        #print(f"NRMSDocVecModel - Scoring his_input_title shape: {his_input_title.shape}")
-        #print(f"NRMSDocVecModel - Scoring pred_input_title_one shape: {pred_input_title_one.shape}")
-        his_input_title = his_input_title.to(self.device)
-        pred_input_title_one = pred_input_title_one.to(self.device)
-
-        user_present = self.userencoder(his_input_title)
-        #print(f"NRMSDocVecModel - User presentation for scoring: {user_present.shape}")
-
-        news_present_one = self.newsencoder(pred_input_title_one.squeeze(1))
-        #print(f"NRMSDocVecModel - News presentation for scoring: {news_present_one.shape}")
-
-        scores = torch.sum(news_present_one * user_present, dim=1, keepdim=True)
-        #print(f"NRMSDocVecModel - Final scores: {scores.shape}")
-        return torch.sigmoid(scores)
+    def score(self, his_input_title, his_input_time, pred_input_title_one):
+        with torch.no_grad():
+            user_present = self.userencoder(his_input_title, his_input_time)
+            news_present_one = self.newsencoder(pred_input_title_one.squeeze(1))
+            scores = torch.sum(news_present_one * user_present, dim=1, keepdim=True)
+            return torch.sigmoid(scores)
 
     def get_loss(self, criterion="cross_entropy"):
         #print(f"NRMSDocVecModel - Loss function: {criterion}")
@@ -193,7 +185,8 @@ class NRMSDocVecModel(nn.Module):
         else:
             raise ValueError(f"Optimizer not defined")
 
-    def predict(self, his_input_title, pred_input_title):
+    def predict(self, his_input_title, his_input_time, pred_input_title):
         with torch.no_grad():
-            scores = self.forward(his_input_title, pred_input_title)        
+            scores = self.forward(his_input_title, his_input_time, pred_input_title)
             return torch.sigmoid(scores)
+

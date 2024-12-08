@@ -81,7 +81,12 @@ class hparams_nrms_torch:
     loss: str = "cross_entropy_loss"
     dropout: float = 0.1 # DOCVEC
     learning_rate: float = 1e-4
+    max_seq_length: int = 50
+    temperature: int = 0.05
+    num_negatives: int = 4
     weight_decay: float = 1e-3
+    time_window: int = 30 * 24 * 3600  # 30 days in seconds
+    min_time_weight: float = 0.1  # Minimum weight for old interactions
     news_output_dim = head_num * head_dim  
     units_per_layer : list[int] = [256, 128] # DOCVEC
 

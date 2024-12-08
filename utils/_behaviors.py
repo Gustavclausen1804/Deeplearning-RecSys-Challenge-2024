@@ -552,6 +552,49 @@ def sampling_strategy_wu2019(
     return df
 
 
+def truncate_history_with_time(
+    df: pl.DataFrame,
+    article_col: str,
+    timestamp_col: str,
+    history_size: int,
+    padding_value_article: Any = 0,
+    padding_value_time: Any = 0,
+    enable_warning: bool = True,
+) -> pl.DataFrame:
+    """Truncates both article history and corresponding timestamps.
+    
+    Args:
+        df (pl.DataFrame): Input DataFrame
+        article_col (str): Name of article history column
+        timestamp_col (str): Name of timestamp history column
+        history_size (int): Maximum size of history to retain
+        padding_value_article: Padding value for article IDs (default 0)
+        padding_value_time: Padding value for timestamps (default 0)
+    """
+    if enable_warning:
+        warnings.warn("The history IDs expected in ascending order")
+        
+    # Truncate both columns to history_size
+    df = df.with_columns([
+        pl.col(article_col).list.tail(history_size).alias(article_col),
+        pl.col(timestamp_col).list.tail(history_size).alias(timestamp_col)
+    ])
+    
+    # Apply padding if needed
+    if padding_value_article is not None and padding_value_time is not None:
+        df = df.with_columns([
+            pl.col(article_col)
+                .list.reverse()
+                .list.eval(pl.element().extend_constant(padding_value_article, n=history_size))
+                .list.reverse(),
+            pl.col(timestamp_col)
+                .list.reverse()
+                .list.eval(pl.element().extend_constant(padding_value_time, n=history_size))
+                .list.reverse()
+        ])
+    
+    return df
+
 def truncate_history(
     df: pl.DataFrame,
     column: str,

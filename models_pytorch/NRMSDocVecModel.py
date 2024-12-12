@@ -89,15 +89,6 @@ class UserEncoderDocVec(nn.Module):
             device=device
         ).to(device)
 
-        # Time embedding module
-        # We choose a small MLP that maps a scalar time delta to the same dimension as articles.
-        time_embedding_dim = hparams["head_num"] * hparams["head_dim"]
-        self.time_mlp = nn.Sequential(
-            nn.Linear(1, time_embedding_dim),
-            nn.ReLU(),
-            nn.Linear(time_embedding_dim, time_embedding_dim)
-        ).to(device)
-
     def forward(self, his_input_title, his_input_time):
         his_input_title = his_input_title.to(self.device)
         his_input_time = his_input_time.to(self.device).unsqueeze(-1)  # [batch_size, history_size, 1]
@@ -105,19 +96,19 @@ class UserEncoderDocVec(nn.Module):
         # Encode titles
         encoded_titles = self.news_encoder(his_input_title)
 
-        # Normalize timestamps
-        mean_t = his_input_time.mean()
-        std_t = his_input_time.std() + 1e-5
-        his_input_time = (his_input_time - mean_t) / std_t
+        # # Normalize timestamps
+        # mean_t = his_input_time.mean()
+        # std_t = his_input_time.std() + 1e-5
+        # his_input_time = (his_input_time - mean_t) / std_t
 
-        weights = 1 - his_input_time
+        # weights = 1 - his_input_time
         
-        weights = weights.expand(-1, -1, encoded_titles.size(-1))
+        # weights = weights.expand(-1, -1, encoded_titles.size(-1))
         
-        enriched_titles = encoded_titles * weights
+        # enriched_titles = encoded_titles * weights
 
         # Apply self-attention and attention layer
-        y = self.self_attention([enriched_titles, enriched_titles, enriched_titles])
+        y = self.self_attention([encoded_titles, encoded_titles, encoded_titles])
         y = self.attention_layer(y)
 
         return y

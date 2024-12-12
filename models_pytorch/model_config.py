@@ -70,7 +70,7 @@ DEFAULT_DOCUMENT_SIZE = 768
 
 class hparams_nrms_torch:
     # INPUT DIMENTIONS:
-    embedding_dim: int = 24  # New parameter
+    embedding_dim: int = 300  # New parameter
     history_size: int = 50
     # MODEL ARCHITECTURE
     head_num: int = 32      # Reduced from 4 #docvec

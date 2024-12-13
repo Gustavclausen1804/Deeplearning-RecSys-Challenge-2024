@@ -4,11 +4,29 @@ import torch.optim as optim
 import numpy as np
 import torch.cuda.amp as amp
 
-from models_pytorch.layers import AttLayer2, SelfAttention
+from models_pytorch.layers import SelfAttention
+
+class TimeGate(nn.Module):
+    def __init__(self, hidden_dim, device='cuda'):
+        super().__init__()
+        self.device = device
+        self.gate_network = nn.Sequential(
+            nn.Linear(hidden_dim + 1, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Sigmoid()
+        ).to(device)
+    
+    def forward(self, embeddings, timestamps):
+        # Concatenate embeddings with timestamps
+        gate_input = torch.cat([embeddings, timestamps], dim=-1)
+        gates = self.gate_network(gate_input)
+        return embeddings * gates
 
 class NewsEncoderDocVec(nn.Module):
     def __init__(self, hparams, seed=42, device='cuda'):
-        super(NewsEncoderDocVec, self).__init__()
+        super().__init__()
         self.device = device
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -23,22 +41,18 @@ class NewsEncoderDocVec(nn.Module):
         # Create layers with residual connections
         self.layers = nn.ModuleList()
         for units in self.units_per_layer:
-            # Each residual block
             block = nn.Sequential(
                 nn.Linear(input_dim, units),
                 nn.ReLU(),
-                nn.LayerNorm(units),  # Layer Normalization instead of Batch Norm
+                nn.LayerNorm(units),
                 nn.Dropout(hparams.get('dropout', 0.2))
             ).to(device)
             self.layers.append(block)
             
-            # If dimensions don't match, add a projection layer for residual connection
             if input_dim != units:
                 self.layers.append(nn.Linear(input_dim, units).to(device))
-            
             input_dim = units
 
-        # Final layer
         self.final = nn.Sequential(
             nn.Linear(input_dim, self.output_dim),
             nn.ReLU()
@@ -54,16 +68,14 @@ class NewsEncoderDocVec(nn.Module):
             batch_size = None
             num_titles = None
 
-        # Apply residual connections
         for i in range(0, len(self.layers), 2):
             identity = x
             x = self.layers[i](x)
             
-            # If dimensions don't match, use projection
             if i+1 < len(self.layers):
                 identity = self.layers[i+1](identity)
             
-            x = x + identity  # Residual connection
+            x = x + identity
 
         out = self.final(x)
 
@@ -72,47 +84,77 @@ class NewsEncoderDocVec(nn.Module):
 
         return out
 
+class TimeAwareAttention(nn.Module):
+    def __init__(self, hidden_dim, device='cuda'):
+        super().__init__()
+        self.device = device
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh()
+        ).to(device)
+        
+        self.attention = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        ).to(device)
+
+    def forward(self, encoded_titles, timestamps):
+        # Process time information
+        time_features = self.time_mlp(timestamps)
+        
+        # Combine content and time features
+        combined_features = torch.cat([encoded_titles, time_features], dim=-1)
+        
+        # Compute attention weights
+        attention_weights = self.attention(combined_features)
+        attention_weights = torch.softmax(attention_weights, dim=1)
+        
+        # Apply attention
+        attended_output = torch.sum(encoded_titles * attention_weights, dim=1)
+        return attended_output
+
 class UserEncoderDocVec(nn.Module):
     def __init__(self, news_encoder, hparams, seed, device='cuda'):
-        super(UserEncoderDocVec, self).__init__()
+        super().__init__()
         self.device = device
         self.news_encoder = news_encoder
+        
+        hidden_dim = hparams["head_num"] * hparams["head_dim"]
+        
+        self.time_gate = TimeGate(hidden_dim, device)
         self.self_attention = SelfAttention(
-            multiheads=hparams["head_num"], 
-            head_dim=hparams["head_dim"], 
+            multiheads=hparams["head_num"],
+            head_dim=hparams["head_dim"],
             seed=seed,
             device=device
         )
-        self.attention_layer = AttLayer2(
-            dim=hparams["attention_hidden_dim"],
-            seed=seed,
+        self.time_aware_attention = TimeAwareAttention(
+            hidden_dim=hidden_dim,
             device=device
-        ).to(device)
+        )
 
     def forward(self, his_input_title, his_input_time):
         his_input_title = his_input_title.to(self.device)
-        his_input_time = his_input_time.to(self.device).unsqueeze(-1)  # [batch_size, history_size, 1]
+        his_input_time = his_input_time.to(self.device).unsqueeze(-1)
 
         # Encode titles
         encoded_titles = self.news_encoder(his_input_title)
-
-        # # Normalize timestamps
-        # mean_t = his_input_time.mean()
-        # std_t = his_input_time.std() + 1e-5
-        # his_input_time = (his_input_time - mean_t) / std_t
-
-        # weights = 1 - his_input_time
         
-        # weights = weights.expand(-1, -1, encoded_titles.size(-1))
+        # Apply time gating to modulate features
+        gated_titles = self.time_gate(encoded_titles, his_input_time)
         
-        # enriched_titles = encoded_titles * weights
-
-        # Apply self-attention and attention layer
-        y = self.self_attention([encoded_titles, encoded_titles, encoded_titles])
-        y = self.attention_layer(y)
-
-        return y
-
+        # Self-attention to capture relationships
+        attended_features = self.self_attention([gated_titles, gated_titles, gated_titles])
+        
+        # Final time-aware attention for aggregation
+        user_vector = self.time_aware_attention(attended_features, his_input_time)
+        
+        return user_vector
 
 class NRMSDocVecModel(nn.Module):
     def __init__(self, hparams, seed=42, device='cuda'):
@@ -144,7 +186,7 @@ class NRMSDocVecModel(nn.Module):
             user_present = self.userencoder(his_input_title, his_input_time)
             news_present = self.newsencoder(pred_input_title)
 
-            if len(news_present.shape) == 2: 
+            if len(news_present.shape) == 2:
                 batch_size = his_input_title.size(0)
                 num_titles = pred_input_title.size(1)
                 news_present = news_present.view(batch_size, num_titles, -1)
@@ -160,7 +202,6 @@ class NRMSDocVecModel(nn.Module):
             return torch.sigmoid(scores)
 
     def get_loss(self, criterion="cross_entropy"):
-        #print(f"NRMSDocVecModel - Loss function: {criterion}")
         if criterion == "cross_entropy":
             return nn.CrossEntropyLoss(ignore_index=-1).to(self.device)
         elif criterion == "log_loss":
@@ -170,7 +211,11 @@ class NRMSDocVecModel(nn.Module):
 
     def get_optimizer(self, hparams_nrms):
         if hparams_nrms.__dict__['optimizer'] == "adam":
-            return optim.Adam(self.parameters(), lr=hparams_nrms.__dict__['learning_rate'], weight_decay=hparams_nrms.__dict__['weight_decay'])
+            return optim.Adam(
+                self.parameters(),
+                lr=hparams_nrms.__dict__['learning_rate'],
+                weight_decay=hparams_nrms.__dict__['weight_decay']
+            )
         else:
             raise ValueError(f"Optimizer not defined")
 
@@ -178,4 +223,3 @@ class NRMSDocVecModel(nn.Module):
         with torch.no_grad():
             scores = self.forward(his_input_title, his_input_time, pred_input_title)
             return torch.sigmoid(scores)
-

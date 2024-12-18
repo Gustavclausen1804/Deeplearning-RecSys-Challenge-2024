@@ -14,3 +14,10 @@ Metrics: {'auc': 0.6029470368985131, 'mrr': 0.38295913539324095, 'ndcg@5': 0.427
 
 DOCVEC (multi head self attention) 0.1
 Metrics: {'auc': 0.6026206272070231, 'mrr': 0.3832181074207851, 'ndcg@5': 0.42921075012394216, 'ndcg@10': 0.49943171461324926}
+
+
+use the numeric features only with the docvec model
+Mean AUC: 0.6106
+
+All features with the docvec model
+Mean AUC: 0.6074

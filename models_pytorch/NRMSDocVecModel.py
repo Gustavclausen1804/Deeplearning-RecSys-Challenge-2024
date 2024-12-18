@@ -6,10 +6,19 @@ import torch.cuda.amp as amp
 
 from models_pytorch.layers import AttLayer2, SelfAttention
 
+import torch
+import torch.nn as nn
+import numpy as np
+
 class NewsEncoderDocVec(nn.Module):
-    def __init__(self, hparams, seed=42, device='cuda'):
+    def __init__(self, hparams, seed=42, device='cuda',
+                 use_category=True, use_topic=True, use_numeric=True):
         super(NewsEncoderDocVec, self).__init__()
         self.device = device
+        self.use_category = use_category
+        self.use_topic = use_topic
+        self.use_numeric = use_numeric
+
         torch.manual_seed(seed)
         np.random.seed(seed)
 
@@ -23,60 +32,109 @@ class NewsEncoderDocVec(nn.Module):
 
         # Numeric feature projection parameters
         self.numeric_feature_dim = 3  # sentiment_score, read_time, pageviews
+        self.null_indicator_dim = self.numeric_feature_dim  # 1 indicator per numeric feature
         self.numeric_proj_dim = hparams.get('numeric_proj_dim', 16)
-        self.numeric_projection = nn.Linear(self.numeric_feature_dim, self.numeric_proj_dim).to(device)
+        self.dropout_rate = hparams.get('dropout', 0.2)
 
-        # Input dimension after concatenation:
-        # docvec_dim + category_emb_dim + topic_emb_dim + numeric_proj_dim
-        combined_input_dim = self.docvec_dim + self.category_emb_dim + self.topic_emb_dim + self.numeric_proj_dim
+        # Numeric feature projection
+        self.numeric_projection = nn.Sequential(
+            nn.BatchNorm1d(self.numeric_feature_dim + self.null_indicator_dim),
+            nn.Linear(self.numeric_feature_dim + self.null_indicator_dim, self.numeric_proj_dim),
+            nn.ReLU(),
+            nn.BatchNorm1d(self.numeric_proj_dim),
+            nn.Dropout(self.dropout_rate),
+            
+            # Add layers with reduced dimensionality
+            nn.Linear(self.numeric_proj_dim, self.numeric_proj_dim // 2),
+            nn.ReLU(),
+            nn.BatchNorm1d(self.numeric_proj_dim // 2),
+            nn.Dropout(self.dropout_rate),
 
+            nn.Linear(self.numeric_proj_dim // 2, self.numeric_proj_dim // 4),
+            nn.ReLU(),
+            nn.BatchNorm1d(self.numeric_proj_dim // 4),
+            nn.Dropout(self.dropout_rate),
+
+            nn.Linear(self.numeric_proj_dim // 4, self.numeric_proj_dim),
+            nn.ReLU(),
+            nn.BatchNorm1d(self.numeric_proj_dim),
+            nn.Dropout(self.dropout_rate)
+        ).to(device)
+
+        # Calculate combined input dimension dynamically
+        input_dim = self.docvec_dim
+        if self.use_category:
+            input_dim += self.category_emb_dim
+        if self.use_topic:
+            input_dim += self.topic_emb_dim
+        if self.use_numeric:
+            input_dim += self.numeric_proj_dim
+
+        # Fully connected layers
         layers = []
-        input_dim = combined_input_dim
+        current_dim = input_dim
         for units in self.units_per_layer:
-            layers.append(nn.Linear(input_dim, units).to(device))
+            layers.append(nn.Linear(current_dim, units).to(device))
             layers.append(nn.ReLU().to(device))
             layers.append(nn.BatchNorm1d(units).to(device))
-            layers.append(nn.Dropout(hparams.get('dropout', 0.2)).to(device))
-            input_dim = units
+            layers.append(nn.Dropout(self.dropout_rate).to(device))
+            current_dim = units
 
         # Final output layer
-        layers.append(nn.Linear(input_dim, self.output_dim).to(device))
+        layers.append(nn.Linear(current_dim, self.output_dim).to(device))
         layers.append(nn.ReLU().to(device))
 
         self.model = nn.Sequential(*layers)
 
     def forward(self, docvecs, category_emb, topic_emb, sentiment_scores, read_times, pageviews):
         # docvecs: [batch_size, num_titles, docvec_dim]
-        # category_emb: [batch_size, num_titles, category_emb_dim]
-        # topic_emb: [batch_size, num_titles, topic_emb_dim]
-        # sentiment_scores, read_times, pageviews: [batch_size, num_titles]
+        # category_emb: [batch_size, num_titles, category_emb_dim] (if use_category)
+        # topic_emb: [batch_size, num_titles, topic_emb_dim] (if use_topic)
+        # sentiment_scores, read_times, pageviews: [batch_size, num_titles] (if use_numeric)
 
         docvecs = docvecs.to(self.device)
-        category_emb = category_emb.to(self.device)
-        topic_emb = topic_emb.to(self.device)
-        sentiment_scores = sentiment_scores.to(self.device)
-        read_times = read_times.to(self.device)
-        pageviews = pageviews.to(self.device)
-
         batch_size, num_titles, _ = docvecs.shape
-
-        # Flatten
         docvecs = docvecs.view(-1, self.docvec_dim)
-        category_emb = category_emb.view(-1, self.category_emb_dim)
-        topic_emb = topic_emb.view(-1, self.topic_emb_dim)
 
-        numeric_features = torch.cat([
-            sentiment_scores.view(-1, 1),
-            read_times.view(-1, 1),
-            pageviews.view(-1, 1)
-        ], dim=-1)  # [batch_size*num_titles, 3]
+        combined_features = [docvecs]
 
-        numeric_vec = self.numeric_projection(numeric_features) # [batch_size*num_titles, numeric_proj_dim]
+        if self.use_category:
+            category_emb = category_emb.to(self.device)
+            category_emb = category_emb.view(-1, self.category_emb_dim)
+            combined_features.append(category_emb)
 
-        combined = torch.cat([docvecs, category_emb, topic_emb, numeric_vec], dim=-1)
+        if self.use_topic:
+            topic_emb = topic_emb.to(self.device)
+            topic_emb = topic_emb.view(-1, self.topic_emb_dim)
+            combined_features.append(topic_emb)
+
+        if self.use_numeric:
+            sentiment_scores = sentiment_scores.to(self.device)
+            read_times = read_times.to(self.device)
+            pageviews = pageviews.to(self.device)
+
+            numeric_features = torch.cat([
+                sentiment_scores.view(-1, 1),
+                read_times.view(-1, 1),
+                pageviews.view(-1, 1)
+            ], dim=-1)
+
+            # Identify null values and create null indicators
+            null_indicators = torch.isnan(numeric_features).float()
+
+            # Replace NaN values with 0
+            numeric_features[torch.isnan(numeric_features)] = 0
+
+            # Concatenate numeric features with null indicators
+            numeric_features_with_nulls = torch.cat([numeric_features, null_indicators], dim=-1)
+
+            # Pass through the numeric projection layer
+            numeric_vec = self.numeric_projection(numeric_features_with_nulls)
+            combined_features.append(numeric_vec)
+
+        combined = torch.cat(combined_features, dim=-1)  # [batch_size*num_titles, combined_input_dim]
         out = self.model(combined)
         out = out.view(batch_size, num_titles, -1)
-
         return out
 
 
@@ -102,11 +160,6 @@ class UserEncoderDocVec(nn.Module):
         ).to(device)
 
     def forward(self, his_input_title, his_category_emb, his_topic_emb, his_sentiment_scores, his_read_times, his_pageviews):
-        # his_input_title: [batch_size, history_size, docvec_dim]
-        # his_category_emb: [batch_size, history_size, category_emb_dim]
-        # his_topic_emb: [batch_size, history_size, topic_emb_dim]
-        # his_sentiment_scores, his_read_times, his_pageviews: [batch_size, history_size]
-
         his_input_title = his_input_title.to(self.device)
         his_category_emb = his_category_emb.to(self.device)
         his_topic_emb = his_topic_emb.to(self.device)
@@ -114,10 +167,6 @@ class UserEncoderDocVec(nn.Module):
         his_read_times = his_read_times.to(self.device)
         his_pageviews = his_pageviews.to(self.device)
 
-        batch_size, history_size, docvec_dim = his_input_title.size()
-
-        # Encode user history articles using the same encoder as candidate articles
-        # Flatten them first if needed
         encoded_titles = self.titleencoder(
             his_input_title,
             his_category_emb,
@@ -127,16 +176,15 @@ class UserEncoderDocVec(nn.Module):
             his_pageviews
         )  # [batch_size, history_size, output_dim]
 
-        # Apply self-attention over user history embeddings
         y = self.self_attention(encoded_titles, encoded_titles, encoded_titles)
         y = self.attention_layer(y)
         y = self.user_projection(y)
-
         return y
 
 
 class NRMSDocVecModel(nn.Module):
-    def __init__(self, hparams, seed=42, device='cuda'):
+    def __init__(self, hparams, seed=42, device='cuda',
+                 use_category=False, use_topic=False, use_numeric=True):
         super(NRMSDocVecModel, self).__init__()
         self.hparams = hparams
         self.seed = seed
@@ -144,18 +192,15 @@ class NRMSDocVecModel(nn.Module):
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-        # Build encoders
-        self.newsencoder = self._build_newsencoder()
-        self.userencoder = self._build_userencoder(self.newsencoder)
+        # Pass flags to newsencoder
+        self.newsencoder = NewsEncoderDocVec(self.hparams, self.seed, self.device,
+                                             use_category=use_category,
+                                             use_topic=use_topic,
+                                             use_numeric=use_numeric)
+        self.userencoder = UserEncoderDocVec(self.newsencoder, self.hparams, self.seed, self.device)
 
         self.to(self.device)
         self.scaler = amp.GradScaler()
-
-    def _build_newsencoder(self):
-        return NewsEncoderDocVec(self.hparams, self.seed, self.device)
-
-    def _build_userencoder(self, titleencoder):
-        return UserEncoderDocVec(titleencoder, self.hparams, self.seed, self.device)
 
     def forward(self,
                 his_input_title=None, his_category_emb=None, his_topic_emb=None,
@@ -164,13 +209,10 @@ class NRMSDocVecModel(nn.Module):
                 pred_sentiment_scores=None, pred_read_times=None, pred_pageviews=None):
         
         with torch.cuda.amp.autocast(enabled=False):
-            # Encode user representation with all features
             user_present = self.userencoder(
                 his_input_title, his_category_emb, his_topic_emb,
                 his_sentiment_scores, his_read_times_hist, his_pageviews_hist
             )
-
-            # Encode candidate news representation with all features
             news_present = self.newsencoder(
                 pred_input_title,
                 pred_category_emb,
@@ -179,8 +221,6 @@ class NRMSDocVecModel(nn.Module):
                 pred_read_times,
                 pred_pageviews
             )
-
-            # Compute scores
             scores = torch.bmm(news_present, user_present.unsqueeze(-1)).squeeze(-1)
             return scores
 

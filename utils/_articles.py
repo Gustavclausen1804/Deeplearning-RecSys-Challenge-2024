@@ -33,7 +33,7 @@ def convert_text2encoding_with_transformers(
     tokenizer: AutoTokenizer,
     column: str,
     max_length: int = None,
-) -> pl.DataFrame:
+) -> tuple[pl.DataFrame, str]:
     """Converts text in a specified DataFrame column to tokens using a provided tokenizer.
     Args:
         df (pl.DataFrame): The input DataFrame containing the text column.

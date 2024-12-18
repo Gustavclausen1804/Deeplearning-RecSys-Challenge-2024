@@ -71,6 +71,14 @@ class UserEncoderDocVec(nn.Module):
             in_features=hparams["attention_hidden_dim"], 
             out_features=hparams["news_output_dim"]
         ).to(device)
+        
+        
+        self.lstm = nn.LSTM(
+            input_size=hparams["news_output_dim"], 
+            hidden_size=hparams["attention_hidden_dim"], 
+            batch_first=True,
+            bidirectional=False
+        ).to(device)
 
     def forward(self, his_input_title):
         #print(f"UserEncoderDocVec - Input shape: {his_input_title.shape}")
@@ -87,8 +95,10 @@ class UserEncoderDocVec(nn.Module):
         #print(f"UserEncoderDocVec - Click title presentations shape: {click_title_presents.shape}")
 
         # Apply self-attention
-        y = self.self_attention(click_title_presents, click_title_presents, click_title_presents)
+        # y = self.self_attention(click_title_presents, click_title_presents, click_title_presents)
         #print(f"UserEncoderDocVec - Output after self-attention: {y.shape}")
+        y, (h_n, c_n) = self.lstm(click_title_presents)
+
         
         # Apply attention layer
         y = self.attention_layer(y)

@@ -152,7 +152,7 @@ class NRMSModel(nn.Module):
         else:
             embedding_layer = nn.Embedding.from_pretrained(
                 embeddings=torch.from_numpy(word2vec_embedding).float(),
-                freeze=False,
+                freeze=True,
             )
 
         # Define NewsEncoder and UserEncoder with device

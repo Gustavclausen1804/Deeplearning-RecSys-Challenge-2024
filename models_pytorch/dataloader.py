@@ -34,6 +34,7 @@ class NewsrecDataLoader(Dataset):
     labels_col: str = DEFAULT_LABELS_COL
     user_col: str = DEFAULT_USER_COL
     kwargs: dict = field(default_factory=dict)
+    test: bool = False
 
     def __post_init__(self):
         """
@@ -43,7 +44,10 @@ class NewsrecDataLoader(Dataset):
             self.article_dict, unknown_representation=self.unknown_representation
         )
         self.unknown_index = [0]
-        self.X, self.y = self.load_data()
+        if self.test:
+            self.X = self.load_data()
+        else:
+            self.X, self.y = self.load_data()
         if self.kwargs:
             self.set_kwargs(self.kwargs)
 
@@ -54,6 +58,11 @@ class NewsrecDataLoader(Dataset):
         raise NotImplementedError("Subclasses should implement this method.")
 
     def load_data(self) -> tuple[pl.DataFrame, pl.Series]:
+        X = self.behaviors.with_columns(
+            pl.col(self.inview_col).list.len().alias("n_samples")
+        )
+        if self.test:
+            return X
         X = self.behaviors.drop(self.labels_col).with_columns(
             pl.col(self.inview_col).list.len().alias("n_samples")
         )
@@ -105,7 +114,8 @@ class NRMSDataSet(NewsrecDataLoader):
         print(self.X.shape)
         for idx in range(len(self.X)):
             sample_X = self.X[idx]
-            sample_y = self.y[idx]
+            if not self.test:
+                sample_y = self.y[idx]
             
             # Extract lists
             history_list = sample_X[self.history_column].to_list()[0]  # Added [0]
@@ -123,15 +133,22 @@ class NRMSDataSet(NewsrecDataLoader):
             pred_input_title = torch.tensor(pred_input_title, dtype=torch.float32)
             if pred_input_title.ndim > 2:
                 pred_input_title = np.squeeze(pred_input_title, axis=1)
-            sample_y_tensor = torch.tensor(sample_y.to_list(), dtype=torch.float32)  # Added to_list()
+            if not self.test:
+                sample_y_tensor = torch.tensor(sample_y.to_list(), dtype=torch.float32)  # Added to_list()
             impression_id_tensor = torch.tensor(impression_id, dtype=torch.int64)
             
-            self.samples.append((
+            if not self.test:
+                self.samples.append((
                 (his_input_title, pred_input_title),
                 sample_y_tensor,
                 impression_id_tensor
-            ))
-        
+                ))
+            else:
+                self.samples.append((
+                (his_input_title, pred_input_title),
+                impression_id_tensor
+                ))
+
         end_time = time.time()
         print(f"Data preprocessing completed in {end_time - start_time:.2f} seconds.")
 

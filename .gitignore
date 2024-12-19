@@ -5,6 +5,7 @@ articles/*
 ebnerd_demo/*
 ebnerd_small/*
 ebnerd_test/*
+ebnerd_testset/*
 **.parquet
 
 # Byte-compiled / optimized / DLL files

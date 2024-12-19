@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import torch.cuda.amp as amp
+from torch.nn import LayerNorm
 
 from models_pytorch.layers import AttLayer2, SelfAttention
 
@@ -74,8 +75,13 @@ class NumericEncoder(nn.Module):
         np.random.seed(seed)
         self.device = device
 
+        # Redesigned NumericEncoder with more layers
         self.layer = nn.Sequential(
-            nn.Linear(input_dim, output_dim),
+            nn.Linear(input_dim, 64),
+            nn.ReLU(),
+            nn.BatchNorm1d(64),
+            nn.Dropout(dropout),
+            nn.Linear(64, output_dim),
             nn.ReLU(),
             nn.BatchNorm1d(output_dim),
             nn.Dropout(dropout)
@@ -86,6 +92,34 @@ class NumericEncoder(nn.Module):
         out = self.layer(x.view(-1, x.size(-1)))
         out = out.view(batch_size, num_titles, -1)
         return out
+
+class TimeDiscount(nn.Module):
+    def __init__(self):
+        super(TimeDiscount, self).__init__()
+        self.layer = nn.Sequential(
+            nn.Linear(1, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, delta_time):
+        return self.layer(delta_time.unsqueeze(-1)).squeeze(-1)
+
+class FeatureFusion(nn.Module):
+    def __init__(self, input_dims, output_dim):
+        super(FeatureFusion, self).__init__()
+        self.linears = nn.ModuleList([nn.Linear(dim, output_dim) for dim in input_dims])
+        self.gates = nn.ModuleList([nn.Linear(dim, output_dim) for dim in input_dims])
+        self.activation = nn.Sigmoid()
+
+    def forward(self, features):
+        # Flatten features to (batch_size * num_titles, dim)
+        features = [feature.view(-1, feature.size(-1)) for feature in features]
+        
+        transformed_features = [linear(feature) for linear, feature in zip(self.linears, features)]
+        gates = [self.activation(gate(feature)) for gate, feature in zip(self.gates, features)]
+        gated_features = [gate * transformed_feature for gate, transformed_feature in zip(gates, transformed_features)]
+        fused_feature = sum(gated_features)
+        return fused_feature
 
 class NewsEncoderDocVec(nn.Module):
     def __init__(self, hparams, seed=42, device='cuda'):
@@ -121,33 +155,24 @@ class NewsEncoderDocVec(nn.Module):
         if self.use_numeric:
             self.numeric_encoder = NumericEncoder(self.numeric_feature_dim, num_out_dim, device=self.device, dropout=dropout, seed=seed)
 
-        combined_input_dim = doc_out_dim
+        input_dims = [doc_out_dim]
         if self.use_category:
-            combined_input_dim += cat_out_dim
+            input_dims.append(cat_out_dim)
         if self.use_topic:
-            combined_input_dim += top_out_dim
+            input_dims.append(top_out_dim)
         if self.use_numeric:
-            combined_input_dim += num_out_dim
+            input_dims.append(num_out_dim)
 
-        final_layers = []
-        units_per_layer = hparams.get('units_per_layer', [512, 512, 512])
-        input_dim = combined_input_dim
-        for units in units_per_layer:
-            final_layers.append(nn.Linear(input_dim, units).to(device))
-            final_layers.append(nn.ReLU().to(device))
-            final_layers.append(nn.BatchNorm1d(units).to(device))
-            final_layers.append(nn.Dropout(dropout).to(device))
-            input_dim = units
+        fusion_output_dim = self.output_dim  # Output dimension after feature fusion
+        self.feature_fusion = FeatureFusion(input_dims, fusion_output_dim).to(self.device)
 
-        final_layers.append(nn.Linear(input_dim, self.output_dim).to(device))
-        final_layers.append(nn.ReLU().to(device))
+        # Implement Layer Normalization
+        self.layer_norm = LayerNorm(fusion_output_dim).to(self.device)
 
-        self.final_projection = nn.Sequential(*final_layers)
-
-        # Learnable parameter for discounting based on publication time
+        # Time discount as a learnable function
         self.use_publication_discount = hparams.get('use_publication_discount', True)
         if self.use_publication_discount:
-            self.beta = nn.Parameter(torch.tensor(0.001, dtype=torch.float32, device=device))  # Recommended initial value
+            self.time_discount = TimeDiscount().to(self.device)
 
     def forward(self, 
                 docvecs, category_emb, topic_emb, 
@@ -167,33 +192,35 @@ class NewsEncoderDocVec(nn.Module):
             ], dim=-1).to(self.device)
             num_out = self.numeric_encoder(numeric_features)
 
-        combined_features = [doc_out]
+        features = [doc_out]
         if cat_out is not None:
-            combined_features.append(cat_out)
+            features.append(cat_out)
         if top_out is not None:
-            combined_features.append(top_out)
+            features.append(top_out)
         if num_out is not None:
-            combined_features.append(num_out)
+            features.append(num_out)
 
-        combined = torch.cat(combined_features, dim=-1)
         batch_size, num_titles, _ = docvecs.size()
-        out = self.final_projection(combined.view(-1, combined.size(-1)))
+
+        # Apply feature fusion
+        fused_features = self.feature_fusion(features)
+
+        # Apply layer normalization
+        out = self.layer_norm(fused_features)
         out = out.view(batch_size, num_titles, -1)
 
         # Publication-time discount
         if self.use_publication_discount and pred_timestamps is not None and impression_timestamps is not None:
-            # UNIX seconds difference: delta_news = impression_timestamps - pred_timestamps
-            # impression_timestamps: [batch_size], pred_timestamps: [batch_size, num_titles]
-            impression_timestamps = impression_timestamps.to(self.device).float().unsqueeze(-1) # [batch_size,1]
-            delta_news = impression_timestamps - pred_timestamps.to(self.device).float() # [batch_size, num_titles]
-            delta_news = torch.clamp(delta_news, min=0, max=24)  # Clamping to 24 hours
+            impression_timestamps = impression_timestamps.to(self.device).float().unsqueeze(-1)  # [batch_size,1]
+            delta_news = impression_timestamps - pred_timestamps.to(self.device).float()  # [batch_size, num_titles]
+            delta_news = torch.clamp(delta_news, min=0, max=100)  # Clamping to 100 hours
 
-            discount_factors = torch.exp(-self.beta * delta_news)
-            discount_factors = discount_factors.unsqueeze(-1) # [batch_size, num_titles, 1]
+            # Apply time discount function
+            discount_factors = self.time_discount(delta_news)
+            discount_factors = discount_factors.unsqueeze(-1)  # [batch_size, num_titles, 1]
             out = out * discount_factors
 
         return out
-
 
 class UserEncoderDocVec(nn.Module):
     def __init__(self, titleencoder, hparams, seed, device='cuda'):
@@ -216,10 +243,13 @@ class UserEncoderDocVec(nn.Module):
             out_features=hparams["news_output_dim"]
         ).to(device)
 
-        # Learnable parameter alpha for session-based discount
+        # Implement Layer Normalization
+        self.layer_norm = LayerNorm(hparams["news_output_dim"]).to(device)
+
+        # Time discount as a learnable function
         self.use_session_discount = hparams.get('use_session_discount', True)
         if self.use_session_discount:
-            self.alpha = nn.Parameter(torch.tensor(0.001, dtype=torch.float32, device=device))  # Recommended initial value
+            self.time_discount = TimeDiscount().to(self.device)
 
     def forward(self, 
                 his_input_titles_padded, his_category_emb_padded, his_topic_emb_padded,
@@ -236,15 +266,12 @@ class UserEncoderDocVec(nn.Module):
         )  # [batch_size, history_size, output_dim]
 
         if self.use_session_discount and his_timestamps_padded is not None and impression_timestamps is not None:
-            # delta_user = impression_timestamps - his_timestamps_padded
             impression_timestamps = impression_timestamps.to(self.device).float().unsqueeze(-1) 
             delta_user = impression_timestamps - his_timestamps_padded.to(self.device).float() 
-            # print(f"Delta User Min: {delta_user.min().item()}, Max: {delta_user.max().item()}")
-            delta_user = torch.clamp(delta_user, min=0, max=48)  # Clamping to 48 hours
+            delta_user = torch.clamp(delta_user, min=0, max=100)  # Clamping to 100 hours
 
-            discount_factors = torch.exp(-self.alpha * delta_user) # [batch_size, history_size]
-            # print(f"Discount Factors Min: {discount_factors.min().item()}, Max: {discount_factors.max().item()}")
-
+            # Apply time discount function
+            discount_factors = self.time_discount(delta_user)
             discount_factors = discount_factors.unsqueeze(-1)      # [batch_size, history_size, 1]
             encoded_titles = encoded_titles * discount_factors
 
@@ -252,8 +279,10 @@ class UserEncoderDocVec(nn.Module):
         y = self.attention_layer(y)
         y = self.user_projection(y)
 
-        return y
+        # Apply layer normalization
+        y = self.layer_norm(y)
 
+        return y
 
 class NRMSDocVecModel(nn.Module):
     def __init__(self, hparams, seed=42, device='cuda'):

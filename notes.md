@@ -40,3 +40,13 @@ Best trial:
     use_numeric: False
     use_publication_discount: False
     use_session_discount: False
+
+FeatureFusion: Modified to apply the activation function (Sigmoid) to the output of the gate (gate(feature)), ensuring both tensors have the same shape before multiplication.
+Flatten Features: Before passing features to FeatureFusion, each feature is flattened to shape [batch_size * num_titles, dim].
+Layer Normalization: Applied after feature fusion and before reshaping back to [batch_size, num_titles, -1].
+NumericEncoder: Redesigned with additional layers for better representation learning.
+Time Discount Mechanism: Implemented as a learnable function with the TimeDiscount class, applied in both NewsEncoderDocVec and UserEncoderDocVec.
+
+
+![alt text](image.png)
+    

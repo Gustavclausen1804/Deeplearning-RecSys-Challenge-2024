@@ -65,6 +65,7 @@ class NRMSDataSet(NewsrecDataLoader):
     sentiment_mapping: dict[int, float] = field(default_factory=dict)
     read_time_mapping: dict[int, float] = field(default_factory=dict)
     pageviews_mapping: dict[int, float] = field(default_factory=dict)
+    timestamp_mapping: dict[int, float] = field(default_factory=dict)
 
     category_emb_dim: int = 128
     topic_emb_dim: int = 128
@@ -126,6 +127,8 @@ class NRMSDataSet(NewsrecDataLoader):
             inview_list = [int(x) for x in inview_list]
 
             impression_id = sample_X['impression_id'].to_list()[0]
+            impression_timestamp = sample_X['impression_time'].to_list()[0]
+            
 
             # Map IDs to article embeddings
             his_input_title = self.lookup_article_matrix[history_list]
@@ -137,12 +140,14 @@ class NRMSDataSet(NewsrecDataLoader):
             his_sentiment_scores_list = [self.sentiment_mapping.get(art_id, default_sentiment) for art_id in history_list]
             his_read_times_list = [self.read_time_mapping.get(art_id, default_read_time) for art_id in history_list]
             his_pageviews_list = [self.pageviews_mapping.get(art_id, default_pageviews) for art_id in history_list]
+            his_timestamps_list = [self.timestamp_mapping.get(art_id, 0.0) for art_id in history_list]
 
             his_category_emb = np.array(his_category_emb_list, dtype=np.float32)
             his_topic_emb = np.array(his_topic_emb_list, dtype=np.float32)
             his_sentiment_scores = np.array(his_sentiment_scores_list, dtype=np.float32)
             his_read_times = np.array(his_read_times_list, dtype=np.float32)
             his_pageviews = np.array(his_pageviews_list, dtype=np.float32)
+            his_timestamps = np.array(his_timestamps_list, dtype=np.float32)
 
             # For candidate articles
             pred_category_emb_list = [self.category_mapping.get(art_id, default_category_emb) for art_id in inview_list]
@@ -150,12 +155,15 @@ class NRMSDataSet(NewsrecDataLoader):
             pred_sentiment_scores_list = [self.sentiment_mapping.get(art_id, default_sentiment) for art_id in inview_list]
             pred_read_times_list = [self.read_time_mapping.get(art_id, default_read_time) for art_id in inview_list]
             pred_pageviews_list = [self.pageviews_mapping.get(art_id, default_pageviews) for art_id in inview_list]
+            pred_timestamps_list = [self.timestamp_mapping.get(art_id, 0.0) for art_id in inview_list]
 
             pred_category_emb = np.array(pred_category_emb_list, dtype=np.float32)
             pred_topic_emb = np.array(pred_topic_emb_list, dtype=np.float32)
             pred_sentiment_scores = np.array(pred_sentiment_scores_list, dtype=np.float32)
             pred_read_times = np.array(pred_read_times_list, dtype=np.float32)
             pred_pageviews = np.array(pred_pageviews_list, dtype=np.float32)
+            pred_timestamps = np.array(pred_timestamps_list, dtype=np.float32)
+            
 
             # Convert all to tensors
             his_input_title = torch.tensor(his_input_title, dtype=torch.float32)
@@ -173,6 +181,7 @@ class NRMSDataSet(NewsrecDataLoader):
             his_sentiment_scores = torch.tensor(his_sentiment_scores, dtype=torch.float32)
             his_read_times = torch.tensor(his_read_times, dtype=torch.float32)
             his_pageviews = torch.tensor(his_pageviews, dtype=torch.float32)
+            his_timestamps = torch.tensor(his_timestamps, dtype=torch.float32)
 
             pred_category_emb = torch.tensor(pred_category_emb, dtype=torch.float32)
             pred_topic_emb = torch.tensor(pred_topic_emb, dtype=torch.float32)
@@ -182,14 +191,16 @@ class NRMSDataSet(NewsrecDataLoader):
 
             sample_y_tensor = torch.tensor(sample_y.to_list(), dtype=torch.float32)
             impression_id_tensor = torch.tensor(impression_id, dtype=torch.int64)
+            impression_timestamp_tensor = torch.tensor(impression_timestamp, dtype=torch.int64)
+            pred_timestamps = torch.tensor(pred_timestamps, dtype=torch.float32)
 
             # Final sample structure:
             # ((his_input_title, his_category_emb, his_topic_emb, his_sentiment_scores, his_read_times, his_pageviews,
             #   pred_input_title, pred_category_emb, pred_topic_emb, pred_sentiment_scores, pred_read_times, pred_pageviews),
             #  sample_y_tensor, impression_id_tensor)
             self.samples.append((
-                (his_input_title, his_category_emb, his_topic_emb, his_sentiment_scores, his_read_times, his_pageviews,
-                 pred_input_title, pred_category_emb, pred_topic_emb, pred_sentiment_scores, pred_read_times, pred_pageviews),
+                (his_input_title, his_category_emb, his_topic_emb, his_sentiment_scores, his_read_times, his_pageviews, his_timestamps,
+                 pred_input_title, pred_category_emb, pred_topic_emb, pred_sentiment_scores, pred_read_times, pred_pageviews, pred_timestamps, impression_timestamp_tensor),
                 sample_y_tensor,
                 impression_id_tensor
             ))

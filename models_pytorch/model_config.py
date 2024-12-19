@@ -89,6 +89,17 @@ class hparams_nrms:
     weight_decay: float = 1e-3
     news_output_dim = 128   # Reduced from 32 // DOCVEC
     units_per_layer : list[int] = [128, 128] # DOCVEC
+    use_category: bool = True
+    use_topic: bool = True
+    use_numeric : bool = True
+    use_session_discount : bool = True
+    use_publication_discount : bool = True
+    doc_out_dim : int = 128
+    cat_out_dim : int = 128
+    top_out_dim : int = 128
+    numeric_proj_dim : int = 16
+    
+    
 
 
 class hparams_nrms_docvec:

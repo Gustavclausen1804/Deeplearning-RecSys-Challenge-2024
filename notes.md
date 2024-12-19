@@ -14,3 +14,29 @@ Metrics: {'auc': 0.6029470368985131, 'mrr': 0.38295913539324095, 'ndcg@5': 0.427
 
 DOCVEC (multi head self attention) 0.1
 Metrics: {'auc': 0.6026206272070231, 'mrr': 0.3832181074207851, 'ndcg@5': 0.42921075012394216, 'ndcg@10': 0.49943171461324926}
+
+
+DOC vec (all features concat in into ff layers )
+Mean AUC: 0.6121
+
+
+Doc vec (numeric and categorical features)
+Mean AUC: 0.6109
+
+
+
+Best trial:
+  Value:  3.823757140259994
+  Params: 
+    head_num: 32
+    shared_dim: 124
+    dropout: 0.161789721292941
+    learning_rate: 1.2747073900306542e-05
+    weight_decay: 0.002739999228286127
+    unit_layer_1: 315
+    unit_layer_2: 500
+    use_category: False
+    use_topic: True
+    use_numeric: False
+    use_publication_discount: False
+    use_session_discount: False

@@ -18,7 +18,8 @@ class DocEncoder(nn.Module):
             nn.Linear(input_dim, output_dim),
             nn.ReLU(),
             nn.BatchNorm1d(output_dim),
-            nn.Dropout(dropout)
+            nn.Dropout(dropout),
+            
         ).to(device)
 
     def forward(self, x):
@@ -177,7 +178,7 @@ class NewsEncoderDocVec(nn.Module):
     def forward(self, 
                 docvecs, category_emb, topic_emb, 
                 sentiment_scores, read_times, pageviews, 
-                impression_timestamps=None, pred_timestamps=None):
+                impression_timestamps, pred_timestamps):
         # Compute embeddings
         doc_out = self.doc_encoder(docvecs)
         cat_out = self.category_encoder(category_emb) if self.use_category else None
@@ -193,16 +194,16 @@ class NewsEncoderDocVec(nn.Module):
             num_out = self.numeric_encoder(numeric_features)
 
         features = [doc_out]
-        if cat_out is not None:
-            features.append(cat_out)
-        if top_out is not None:
-            features.append(top_out)
-        if num_out is not None:
-            features.append(num_out)
+        # # if cat_out is not None:
+        # #     features.append(cat_out)
+        # # if top_out is not None:
+        # #     features.append(top_out)
+        # # if num_out is not None:
+        # #     features.append(num_out)
 
         batch_size, num_titles, _ = docvecs.size()
 
-        # Apply feature fusion
+        # # Apply feature fusion
         fused_features = self.feature_fusion(features)
 
         # Apply layer normalization
@@ -210,15 +211,15 @@ class NewsEncoderDocVec(nn.Module):
         out = out.view(batch_size, num_titles, -1)
 
         # Publication-time discount
-        if self.use_publication_discount and pred_timestamps is not None and impression_timestamps is not None:
-            impression_timestamps = impression_timestamps.to(self.device).float().unsqueeze(-1)  # [batch_size,1]
-            delta_news = impression_timestamps - pred_timestamps.to(self.device).float()  # [batch_size, num_titles]
-            delta_news = torch.clamp(delta_news, min=0, max=100)  # Clamping to 100 hours
+        # if self.use_publication_discount and pred_timestamps is not None and impression_timestamps is not None:
+        impression_timestamps = impression_timestamps.to(self.device).float().unsqueeze(-1)  # [batch_size,1]
+        delta_news = impression_timestamps - pred_timestamps.to(self.device).float()  # [batch_size, num_titles]
+        delta_news = torch.clamp(delta_news, min=0, max=100)  # Clamping to 100 hours
 
-            # Apply time discount function
-            discount_factors = self.time_discount(delta_news)
-            discount_factors = discount_factors.unsqueeze(-1)  # [batch_size, num_titles, 1]
-            out = out * discount_factors
+        # Apply time discount function
+        discount_factors = self.time_discount(delta_news)
+        discount_factors = discount_factors.unsqueeze(-1)  # [batch_size, num_titles, 1]
+        out = out * discount_factors
 
         return out
 
@@ -254,7 +255,7 @@ class UserEncoderDocVec(nn.Module):
     def forward(self, 
                 his_input_titles_padded, his_category_emb_padded, his_topic_emb_padded,
                 his_sentiment_padded, his_read_times_padded, his_pageviews_padded,
-                impression_timestamps=None, his_timestamps_padded=None):
+                impression_timestamps, his_timestamps_padded):
 
         encoded_titles = self.titleencoder(
             his_input_titles_padded,
@@ -262,18 +263,19 @@ class UserEncoderDocVec(nn.Module):
             his_topic_emb_padded,
             his_sentiment_padded,
             his_read_times_padded,
-            his_pageviews_padded
+            his_pageviews_padded,
+            impression_timestamps,
+            his_timestamps_padded
         )  # [batch_size, history_size, output_dim]
 
-        if self.use_session_discount and his_timestamps_padded is not None and impression_timestamps is not None:
-            impression_timestamps = impression_timestamps.to(self.device).float().unsqueeze(-1) 
-            delta_user = impression_timestamps - his_timestamps_padded.to(self.device).float() 
-            delta_user = torch.clamp(delta_user, min=0, max=100)  # Clamping to 100 hours
+        impression_timestamps = impression_timestamps.to(self.device).float().unsqueeze(-1) 
+        delta_user = impression_timestamps - his_timestamps_padded.to(self.device).float() 
+        delta_user = torch.clamp(delta_user, min=0, max=100)  # Clamping to 100 hours
 
-            # Apply time discount function
-            discount_factors = self.time_discount(delta_user)
-            discount_factors = discount_factors.unsqueeze(-1)      # [batch_size, history_size, 1]
-            encoded_titles = encoded_titles * discount_factors
+        # Apply time discount function
+        discount_factors = self.time_discount(delta_user)
+        discount_factors = discount_factors.unsqueeze(-1)      # [batch_size, history_size, 1]
+        encoded_titles = encoded_titles * discount_factors
 
         y = self.self_attention(encoded_titles, encoded_titles, encoded_titles)
         y = self.attention_layer(y)

@@ -69,29 +69,56 @@ class TopicEncoder(nn.Module):
         return out
 
 class NumericEncoder(nn.Module):
-    def __init__(self, input_dim, output_dim, device='cuda', dropout=0.2, seed=42):
+    def __init__(self, embedding_dim=32, final_dim=96, seed=42):
+        """
+        Numeric encoder for bucketized features with flexible transformations.
+        Args:
+            embedding_dim: Size of embeddings for each bucketized feature.
+            final_dim: Dimension of the output from NumericEncoder.
+        """
         super(NumericEncoder, self).__init__()
         torch.manual_seed(seed)
         np.random.seed(seed)
-        self.device = device
 
-        # Redesigned NumericEncoder with more layers
-        self.layer = nn.Sequential(
-            nn.Linear(input_dim, 64),
-            nn.ReLU(),
-            nn.BatchNorm1d(64),
-            nn.Dropout(dropout),
-            nn.Linear(64, output_dim),
-            nn.ReLU(),
-            nn.BatchNorm1d(output_dim),
-            nn.Dropout(dropout)
-        ).to(device)
-        
-    def forward(self, x):
-        batch_size, num_titles, _ = x.size()
-        out = self.layer(x.view(-1, x.size(-1)))
-        out = out.view(batch_size, num_titles, -1)
-        return out
+        # Embedding layers for each bucketized feature
+        self.sentiment_embedding = nn.Embedding(num_embeddings=3, embedding_dim=embedding_dim)  # 3 sentiment buckets
+        self.read_time_embedding = nn.Embedding(num_embeddings=3, embedding_dim=embedding_dim)  # 3 read time buckets
+        self.pageview_embedding = nn.Embedding(num_embeddings=3, embedding_dim=embedding_dim)  # 3 pageview buckets
+
+        # Linear projection to ensure compatibility with FeatureFusion
+        self.output_projection = nn.Linear(3 * embedding_dim, final_dim)
+
+    def forward(self, sentiment_buckets, read_time_buckets, pageview_buckets):
+        """
+        Args:
+            sentiment_buckets: Tensor of shape [batch_size, num_titles] (LongTensor).
+            read_time_buckets: Tensor of shape [batch_size, num_titles] (LongTensor).
+            pageview_buckets: Tensor of shape [batch_size, num_titles] (LongTensor).
+        Returns:
+            Encoded numeric features of shape [batch_size, num_titles, final_dim].
+        """
+        # Ensure inputs are LongTensor
+        sentiment_buckets = sentiment_buckets.long()
+        read_time_buckets = read_time_buckets.long()
+        pageview_buckets = pageview_buckets.long()
+
+        # Embedding lookups
+        sentiment_emb = self.sentiment_embedding(sentiment_buckets)  # [batch_size, num_titles, embedding_dim]
+        read_time_emb = self.read_time_embedding(read_time_buckets)  # [batch_size, num_titles, embedding_dim]
+        pageview_emb = self.pageview_embedding(pageview_buckets)     # [batch_size, num_titles, embedding_dim]
+
+        # Concatenate embeddings
+        combined_emb = torch.cat([sentiment_emb, read_time_emb, pageview_emb], dim=-1)  # [batch_size, num_titles, 3*embedding_dim]
+
+        # Project to final dimension
+        final_output = self.output_projection(combined_emb)  # [batch_size, num_titles, final_dim]
+
+        return final_output
+
+
+
+
+
 
 class TimeDiscount(nn.Module):
     def __init__(self):
@@ -106,20 +133,35 @@ class TimeDiscount(nn.Module):
 
 class FeatureFusion(nn.Module):
     def __init__(self, input_dims, output_dim):
+        """
+        Args:
+            input_dims: List of input dimensions for each feature.
+            output_dim: Output dimension of the fused feature.
+        """
         super(FeatureFusion, self).__init__()
         self.linears = nn.ModuleList([nn.Linear(dim, output_dim) for dim in input_dims])
         self.gates = nn.ModuleList([nn.Linear(dim, output_dim) for dim in input_dims])
         self.activation = nn.Sigmoid()
 
     def forward(self, features):
-        # Flatten features to (batch_size * num_titles, dim)
+        # Flatten features to [batch_size * num_titles, dim]
         features = [feature.view(-1, feature.size(-1)) for feature in features]
-        
-        transformed_features = [linear(feature) for linear, feature in zip(self.linears, features)]
-        gates = [self.activation(gate(feature)) for gate, feature in zip(self.gates, features)]
-        gated_features = [gate * transformed_feature for gate, transformed_feature in zip(gates, transformed_features)]
+
+        # Ensure all features match the expected dimensions
+        transformed_features = [
+            linear(feature) for linear, feature in zip(self.linears, features)
+        ]
+        gates = [
+            self.activation(gate(feature)) for gate, feature in zip(self.gates, features)
+        ]
+        gated_features = [
+            gate * transformed_feature for gate, transformed_feature in zip(gates, transformed_features)
+        ]
+
+        # Sum gated features to produce the final fused feature
         fused_feature = sum(gated_features)
         return fused_feature
+
 
 class NewsEncoderDocVec(nn.Module):
     def __init__(self, hparams, seed=42, device='cuda'):
@@ -139,12 +181,12 @@ class NewsEncoderDocVec(nn.Module):
 
         self.category_emb_dim = hparams.get("category_emb_dim", 128) if self.use_category else 0
         self.topic_emb_dim = hparams.get("topic_emb_dim", 128) if self.use_topic else 0
-        self.numeric_feature_dim = 3 if self.use_numeric else 0
+        self.numeric_embedding_dim = hparams.get('numeric_embedding_dim', 96)
 
         doc_out_dim = hparams.get('doc_out_dim', 128)
         cat_out_dim = hparams.get('cat_out_dim', 128) if self.use_category else 0
         top_out_dim = hparams.get('top_out_dim', 128) if self.use_topic else 0
-        num_out_dim = hparams.get('numeric_proj_dim', 16) if self.use_numeric else 0
+        num_out_dim = self.numeric_embedding_dim if self.use_numeric else 0
 
         self.doc_encoder = DocEncoder(self.docvec_dim, doc_out_dim, device=self.device, dropout=dropout, seed=seed)
         
@@ -153,7 +195,7 @@ class NewsEncoderDocVec(nn.Module):
         if self.use_topic:
             self.topic_encoder = TopicEncoder(self.topic_emb_dim, top_out_dim, device=self.device, dropout=dropout, seed=seed)
         if self.use_numeric:
-            self.numeric_encoder = NumericEncoder(self.numeric_feature_dim, num_out_dim, device=self.device, dropout=dropout, seed=seed)
+            self.numeric_encoder = NumericEncoder(embedding_dim=self.numeric_embedding_dim, seed=seed)
 
         input_dims = [doc_out_dim]
         if self.use_category:
@@ -161,7 +203,8 @@ class NewsEncoderDocVec(nn.Module):
         if self.use_topic:
             input_dims.append(top_out_dim)
         if self.use_numeric:
-            input_dims.append(num_out_dim)
+            input_dims.append(num_out_dim)  # Ensure num_out_dim matches final_dim in NumericEncoder
+
 
         fusion_output_dim = self.output_dim  # Output dimension after feature fusion
         self.feature_fusion = FeatureFusion(input_dims, fusion_output_dim).to(self.device)
@@ -176,7 +219,7 @@ class NewsEncoderDocVec(nn.Module):
 
     def forward(self, 
                 docvecs, category_emb, topic_emb, 
-                sentiment_scores, read_times, pageviews, 
+                sentiment_buckets, read_time_buckets, pageview_buckets, 
                 impression_timestamps=None, pred_timestamps=None):
         # Compute embeddings
         doc_out = self.doc_encoder(docvecs)
@@ -185,12 +228,7 @@ class NewsEncoderDocVec(nn.Module):
 
         num_out = None
         if self.use_numeric:
-            numeric_features = torch.cat([
-                sentiment_scores.unsqueeze(-1),
-                read_times.unsqueeze(-1),
-                pageviews.unsqueeze(-1)
-            ], dim=-1).to(self.device)
-            num_out = self.numeric_encoder(numeric_features)
+            num_out = self.numeric_encoder(sentiment_buckets, read_time_buckets, pageview_buckets)
 
         features = [doc_out]
         if cat_out is not None:
@@ -214,13 +252,13 @@ class NewsEncoderDocVec(nn.Module):
             impression_timestamps = impression_timestamps.to(self.device).float().unsqueeze(-1)  # [batch_size,1]
             delta_news = impression_timestamps - pred_timestamps.to(self.device).float()  # [batch_size, num_titles]
             delta_news = torch.clamp(delta_news, min=0, max=100)  # Clamping to 100 hours
-
             # Apply time discount function
             discount_factors = self.time_discount(delta_news)
             discount_factors = discount_factors.unsqueeze(-1)  # [batch_size, num_titles, 1]
             out = out * discount_factors
 
         return out
+
 
 class UserEncoderDocVec(nn.Module):
     def __init__(self, titleencoder, hparams, seed, device='cuda'):

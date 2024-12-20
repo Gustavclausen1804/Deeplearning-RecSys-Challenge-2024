@@ -1,10 +1,10 @@
 # BEHAVIORS
-DEFAULT_IMPRESSION_TIMESTAMP_COL = "impression_time"
+DEFAULT_IMPRESSION_TIMESTAMP_COL = "impression_time" # 
 DEFAULT_IS_BEYOND_ACCURACY_COL = "is_beyond_accuracy"
 DEFAULT_CLICKED_ARTICLES_COL = "article_ids_clicked"
-DEFAULT_SCROLL_PERCENTAGE_COL = "scroll_percentage"
+DEFAULT_SCROLL_PERCENTAGE_COL = "scroll_percentage" #
 DEFAULT_INVIEW_ARTICLES_COL = "article_ids_inview"
-DEFAULT_IMPRESSION_ID_COL = "impression_id"
+DEFAULT_IMPRESSION_ID_COL = "impression_id" 
 DEFAULT_IS_SUBSCRIBER_COL = "is_subscriber"
 DEFAULT_IS_SSO_USER_COL = "is_sso_user"
 DEFAULT_ARTICLE_ID_COL = "article_id"
@@ -21,8 +21,8 @@ DEFAULT_NEXT_READ_TIME_COL = f"next_{DEFAULT_READ_TIME_COL}"
 
 # ARTICLES
 DEFAULT_ARTICLE_MODIFIED_TIMESTAMP_COL = "last_modified_time"
-DEFAULT_ARTICLE_PUBLISHED_TIMESTAMP_COL = "published_time"
-DEFAULT_SENTIMENT_LABEL_COL = "sentiment_label" 
+DEFAULT_ARTICLE_PUBLISHED_TIMESTAMP_COL = "published_time" ##
+DEFAULT_SENTIMENT_LABEL_COL = "sentiment_label"  # 
 DEFAULT_SENTIMENT_SCORE_COL = "sentiment_score" # 
 DEFAULT_TOTAL_READ_TIME_COL = "total_read_time" # 
 DEFAULT_TOTAL_PAGEVIEWS_COL = "total_pageviews" # 

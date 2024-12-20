@@ -50,3 +50,7 @@ Time Discount Mechanism: Implemented as a learnable function with the TimeDiscou
 
 ![alt text](image.png)
     
+
+
+auc 0.637 only time. 
+    ![alt text](image-1.png)

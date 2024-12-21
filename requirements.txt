@@ -1,10 +1,11 @@
 torch
-polars
-pandas
-tqdm
-pyyaml
 transformers
-pyarrow
-tensorboard
+pandas
+numpy
+polars
 matplotlib
+optuna
+tqdm
 scikit-learn
+ipython
+pathlib

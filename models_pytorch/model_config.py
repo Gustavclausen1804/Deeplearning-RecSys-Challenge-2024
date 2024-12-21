@@ -70,16 +70,16 @@ DEFAULT_DOCUMENT_SIZE = 768
 
 class hparams_nrms_torch:
     # INPUT DIMENTIONS:
-    embedding_dim: int = 24  # New parameter
+    embedding_dim: int = 150 
     history_size: int = 50
     # MODEL ARCHITECTURE
-    head_num: int = 32      # Reduced from 4 #docvec
-    head_dim: int = 16      # Reduced from 16 #docvec
-    attention_hidden_dim: int = head_num * head_dim  # Reduced from 32
+    head_num: int = 32      
+    head_dim: int = 16      
+    attention_hidden_dim: int = head_num * head_dim 
     # MODEL OPTIMIZER:
     optimizer: str = "adam"
     loss: str = "cross_entropy_loss"
-    dropout: float = 0.1 # DOCVEC
+    dropout: float = 0.1
     learning_rate: float = 1e-4
     max_seq_length: int = 50
     temperature: int = 0.05
